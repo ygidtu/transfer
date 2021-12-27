@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
@@ -14,8 +15,11 @@ func GetList() ([]File, error) {
 	target := []File{}
 	client := &http.Client{}
 
-	if transport != nil {
-		client.Transport = transport
+	if proxy != nil {
+		client.Transport = &http.Transport{
+			Proxy:           http.ProxyURL(proxy),
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		}
 	}
 
 	resp, err := client.Get(fmt.Sprintf("%v:%v/list", host, port))

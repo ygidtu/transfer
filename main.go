@@ -2,24 +2,20 @@ package main
 
 import (
 	"fmt"
-	"net"
 	"net/http"
 	"net/url"
 	"strings"
-	"time"
 
 	"github.com/voxelbrain/goptions"
 	"go.uber.org/zap"
 )
 
 var (
-	path      string
-	host      string
-	port      int
-	transport *http.Transport
-
-	// Sugar is zap sugared logger
-	log *zap.SugaredLogger
+	path  string
+	host  string
+	port  int
+	log   *zap.SugaredLogger
+	proxy *url.URL
 )
 
 // comand line parameters
@@ -86,20 +82,12 @@ func defaultGet(opt options) {
 	}
 
 	if opt.Get.Proxy != "" {
-		proxyURL, err := url.Parse(opt.Get.Proxy)
+		p, err := url.Parse(opt.Get.Proxy)
 		if err != nil {
 			log.Fatal(err, "Proxy format error")
 		}
 
-		transport = &http.Transport{
-			Proxy:               http.ProxyURL(proxyURL),
-			MaxIdleConns:        1,
-			MaxIdleConnsPerHost: 1,
-			DialContext: (&net.Dialer{
-				Timeout:   30 * time.Second,
-				KeepAlive: 30 * time.Second,
-			}).DialContext,
-		}
+		proxy = p
 	}
 }
 

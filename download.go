@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"crypto/tls"
 	"fmt"
 	"io"
 	"net/http"
@@ -56,8 +57,12 @@ func Download(file File) error {
 
 	// create client
 	client := &http.Client{}
-	if transport != nil {
-		client.Transport = transport
+	if proxy != nil {
+
+		client.Transport = &http.Transport{
+			Proxy:           http.ProxyURL(proxy),
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		}
 	}
 
 	resp, err := client.Do(req)
