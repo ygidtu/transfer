@@ -1,18 +1,22 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
+	"io"
+	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
-	"time"
 
-	"github.com/cavaliercoder/grab"
 	pb "github.com/cheggaaa/pb/v3"
 )
 
 // Download is funciton that download links
-func Download(u, output string) error {
-	log.Info("start to download: ", u)
+func Download(file File) error {
+	output := filepath.Join(path, file.Path)
+	u := fmt.Sprintf("%v:%v/%v", host, port, url.PathEscape(file.Path))
+	log.Info("start to download: ", file.Path)
 	if u == "" {
 		return fmt.Errorf("empty url")
 	}
@@ -29,71 +33,72 @@ func Download(u, output string) error {
 		}
 	}
 
-	req, err := grab.NewRequest(output, u)
-
+	req, err := http.NewRequest(http.MethodGet, u, nil)
 	if err != nil {
 		return err
 	}
 
-	// setup proxy
-	c := grab.NewClient()
-	if transport != nil {
-		// create http client
-		c.HTTPClient.Transport = transport
-	}
-
-	resp := c.Do(req)
-
-    // the grab could not correctlly determine whether my server could resume
-    // therefore force to set true to CanResume
-    resp.CanResume = true
-	bar := pb.New64(resp.Size)
-
-	if stat, err := os.Stat(output); os.IsExist(err) {
-		if stat.Size() == resp.Size {
+	var startByte int64 = 0
+	if stat, err := os.Stat(output); !os.IsNotExist(err) {
+		if stat.Size() == file.Size {
 			log.Info("download complete")
 			return nil
-		} else if stat.Size() > resp.Size {
-			log.Warnf("%v size [%v] > remote [%v], redownload", output, stat.Size(), resp.Size)
+		} else if stat.Size() > file.Size {
+			log.Warnf("%v size [%v] > remote [%v], redownload", output, stat.Size(), file.Size)
 			os.Remove(output)
 		} else {
-			bar = pb.New64(resp.Size - stat.Size())
+			startByte = stat.Size()
 		}
 	}
 
-	t := time.NewTicker(5000 * time.Millisecond)
-	defer t.Stop()
+	// set request range
+	req.Header.Set("Range", fmt.Sprintf("bytes=%d-", startByte))
 
+	// create client
+	client := &http.Client{}
+	if transport != nil {
+		client.Transport = transport
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	// save to file
+	f, err := os.OpenFile(output, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return err
+	}
+	w := bufio.NewWriter(f)
+
+	// set progress bar
+	bar := pb.New64(file.Size - startByte)
 	bar.Set(pb.Bytes, true)
-	bar.Start()
-	defer bar.Finish()
 
-Loop:
-	for {
-		select {
-		case <-t.C:
-			bar.SetCurrent(resp.BytesComplete())
-		case <-resp.Done:
-			// download is complete
-			break Loop
-		}
+	bar.Start()
+	barReader := bar.NewProxyReader(resp.Body)
+	_, err = io.Copy(w, barReader)
+	if err != nil {
+		return err
 	}
+	bar.Finish()
+	w.Flush()
+	f.Close()
 
 	if stat, err := os.Stat(output); !os.IsNotExist(err) {
-		if stat.Size() < resp.Size {
-			log.Warn("dowload incomplete")
-			os.Remove(output)
-			return Download(u, output)
+		if stat.Size() != file.Size {
+			log.Infof("download incomplete: %v != %v", stat.Size(), file.Size)
+			if stat.Size() < file.Size {
+				f.Close()
+				return Download(file)
+			} else if stat.Size() > file.Size {
+				os.Remove(output)
+				return Download(file)
+			}
 		}
-	} else if os.IsNotExist(err) {
-		log.Warn("dowload incomplete")
-		return Download(u, output)
 	}
 
-	if resp.Err(); err != nil {
-		return fmt.Errorf("failed to download file: %v", err)
-	}
-
-	// check for errors
 	return nil
 }

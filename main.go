@@ -5,7 +5,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -104,6 +103,11 @@ func defaultGet(opt options) {
 	}
 }
 
+type File struct {
+	Path string
+	Size int64
+}
+
 func main() {
 	var options = options{}
 	goptions.ParseAndFail(&options)
@@ -134,7 +138,7 @@ func main() {
 		}
 
 		for _, u := range targets {
-			if err := Download(fmt.Sprintf("%v:%v/%v", host, port, url.PathEscape(u)), filepath.Join(path, u)); err != nil {
+			if err := Download(u); err != nil {
 				log.Warn(err)
 			}
 		}

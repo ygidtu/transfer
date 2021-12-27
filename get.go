@@ -8,10 +8,10 @@ import (
 )
 
 // GetList used by get function to get all files to download
-func GetList() ([]string, error) {
+func GetList() ([]File, error) {
 	log.Infof("Get files: %v:%v", host, port)
 
-	target := []string{}
+	target := []File{}
 	client := &http.Client{}
 
 	if transport != nil {
