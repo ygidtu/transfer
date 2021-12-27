@@ -43,6 +43,10 @@ func Download(u, output string) error {
 	}
 
 	resp := c.Do(req)
+
+    // the grab could not correctlly determine whether my server could resume
+    // therefore force to set true to CanResume
+    resp.CanResume = true
 	bar := pb.New64(resp.Size)
 
 	if stat, err := os.Stat(output); os.IsExist(err) {
