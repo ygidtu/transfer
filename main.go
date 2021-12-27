@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"log"
 	"net"
 	"net/http"
 	"net/url"
@@ -11,6 +10,7 @@ import (
 	"time"
 
 	"github.com/voxelbrain/goptions"
+	"go.uber.org/zap"
 )
 
 var (
@@ -18,6 +18,9 @@ var (
 	host      string
 	port      int
 	transport *http.Transport
+
+	// Sugar is zap sugared logger
+	log *zap.SugaredLogger
 )
 
 // comand line parameters
@@ -108,31 +111,31 @@ func main() {
 	if options.Verbs == "send" {
 		defaultSend(options)
 
-		log.Println("path: ", path)
-		log.Println("host: ", host)
-		log.Println("port: ", port)
+		log.Info("path: ", path)
+		log.Info("host: ", host)
+		log.Info("port: ", port)
 
 		http.HandleFunc("/list", ListFiles)
 
 		fs := http.FileServer(http.Dir(path))
 		http.Handle("/", http.StripPrefix("/", fs))
 
-		log.Fatal(http.ListenAndServe(fmt.Sprintf("%v:%v", host, port), nil))
+		log.Error(http.ListenAndServe(fmt.Sprintf("%v:%v", host, port), nil))
 	} else if options.Verbs == "get" {
 		defaultGet(options)
 
-		log.Println("path: ", path)
-		log.Println("host: ", host)
-		log.Println("port: ", port)
+		log.Info("path: ", path)
+		log.Info("host: ", host)
+		log.Info("port: ", port)
 
 		targets, err := GetList()
 		if err != nil {
-			log.Fatal(err)
+			log.Error(err)
 		}
 
 		for _, u := range targets {
 			if err := Download(fmt.Sprintf("%v:%v/%v", host, port, url.PathEscape(u)), filepath.Join(path, u)); err != nil {
-				log.Fatal(err)
+				log.Warn(err)
 			}
 		}
 	}

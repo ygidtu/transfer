@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"time"
@@ -13,7 +12,7 @@ import (
 
 // Download is funciton that download links
 func Download(u, output string) error {
-	log.Println("start to download: ", u)
+	log.Info("start to download: ", u)
 	if u == "" {
 		return fmt.Errorf("empty url")
 	}
@@ -30,10 +29,6 @@ func Download(u, output string) error {
 		}
 	}
 
-	if _, err := os.Stat(output); os.IsExist(err) {
-		os.Remove(output)
-	}
-
 	req, err := grab.NewRequest(output, u)
 
 	if err != nil {
@@ -48,6 +43,13 @@ func Download(u, output string) error {
 	}
 
 	resp := c.Do(req)
+
+	if stat, err := os.Stat(output); os.IsExist(err) {
+		if stat.Size() == resp.Size {
+			log.Info("download complete")
+			return nil
+		}
+	}
 
 	t := time.NewTicker(5000 * time.Millisecond)
 	defer t.Stop()
@@ -68,8 +70,15 @@ Loop:
 		}
 	}
 
-	if resp.BytesComplete() != resp.Size {
-		return fmt.Errorf("dowload incomplete")
+	if stat, err := os.Stat(output); !os.IsNotExist(err) {
+		if stat.Size() != resp.Size {
+			return fmt.Errorf("dowload incomplete")
+		}
+
+		if stat.Size() >= resp.Size {
+			log.Warnf("%v size [%v] > remote [%v], redownload", output, stat.Size(), resp.Size)
+			os.Remove(output)
+		}
 	}
 
 	if resp.Err(); err != nil {

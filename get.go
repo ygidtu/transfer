@@ -4,13 +4,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
-	"log"
 	"net/http"
 )
 
 // GetList used by get function to get all files to download
 func GetList() ([]string, error) {
-	log.Println(fmt.Sprintf("Get files: %v:%v", host, port))
+	log.Infof("Get files: %v:%v", host, port)
 
 	target := []string{}
 	client := &http.Client{}
