@@ -43,18 +43,23 @@ func Download(u, output string) error {
 	}
 
 	resp := c.Do(req)
+	bar := pb.New64(resp.Size)
 
 	if stat, err := os.Stat(output); os.IsExist(err) {
 		if stat.Size() == resp.Size {
 			log.Info("download complete")
 			return nil
+		} else if stat.Size() > resp.Size {
+			log.Warnf("%v size [%v] > remote [%v], redownload", output, stat.Size(), resp.Size)
+			os.Remove(output)
+		} else {
+			bar = pb.New64(resp.Size - stat.Size())
 		}
 	}
 
 	t := time.NewTicker(5000 * time.Millisecond)
 	defer t.Stop()
 
-	bar := pb.New64(resp.Size)
 	bar.Set(pb.Bytes, true)
 	bar.Start()
 	defer bar.Finish()
@@ -71,14 +76,14 @@ Loop:
 	}
 
 	if stat, err := os.Stat(output); !os.IsNotExist(err) {
-		if stat.Size() != resp.Size {
-			return fmt.Errorf("dowload incomplete")
-		}
-
-		if stat.Size() >= resp.Size {
-			log.Warnf("%v size [%v] > remote [%v], redownload", output, stat.Size(), resp.Size)
+		if stat.Size() < resp.Size {
+			log.Warn("dowload incomplete")
 			os.Remove(output)
+			return Download(u, output)
 		}
+	} else if os.IsNotExist(err) {
+		log.Warn("dowload incomplete")
+		return Download(u, output)
 	}
 
 	if resp.Err(); err != nil {
