@@ -125,8 +125,9 @@ func main() {
 			log.Error(err)
 		}
 
-		for _, u := range targets {
-			if err := Download(u); err != nil {
+		for idx, file := range targets {
+			log.Infof("[%d/%d] start to download: %v", idx+1, len(targets), file.Path)
+			if err := Download(file); err != nil {
 				log.Warn(err)
 			}
 		}
