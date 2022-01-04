@@ -8,9 +8,7 @@ import (
 	"strings"
 )
 
-// ListFiles as name says list all files under direcory
-func ListFiles(w http.ResponseWriter, req *http.Request) {
-
+func listFiles() ([]File, error) {
 	files := []File{}
 	err := filepath.Walk(path, func(p string, info os.FileInfo, err error) error {
 
@@ -20,9 +18,15 @@ func ListFiles(w http.ResponseWriter, req *http.Request) {
 
 			files = append(files, File{Path: p, Size: info.Size()})
 		}
-
 		return nil
 	})
+	return files, err
+}
+
+// ListFiles as name says list all files under direcory
+func ListFiles(w http.ResponseWriter, req *http.Request) {
+
+	files, err := listFiles()
 	if err != nil {
 		log.Error(err)
 	}
