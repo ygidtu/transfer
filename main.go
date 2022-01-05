@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"net/http"
-	"net/url"
 	"path/filepath"
 	"strings"
 
@@ -16,7 +15,7 @@ var (
 	host  string
 	port  int
 	log   *zap.SugaredLogger
-	proxy *url.URL
+	proxy *Proxy
 )
 
 // comand line parameters
@@ -33,7 +32,7 @@ type options struct {
 		Path  string `goptions:"-i, --path, description='the path to save files'"`
 		Host  string `goptions:"-h, --host, description='the target host ip'"`
 		Port  int    `goptions:"-p, --port, description='the target port'"`
-		Proxy string `goptions:"-x, --proxy, description='the proxy to use'"`
+		Proxy string `goptions:"-x, --proxy, description='the proxy to use [http or socks5]'"`
 	} `goptions:"get"`
 	Sftp struct {
 		Path     string `goptions:"-l, --local, description='the local path'"`
@@ -43,6 +42,7 @@ type options struct {
 		Username string `goptions:"-u, --user, obligatory,description='the username'"`
 		Passwd   string `goptions:"-w, --password, description='the password of user [optional, default will try with id_rsa config]'"`
 		Pull     bool   `goptions:"--pull, description='pull files from server'"`
+		Proxy    string `goptions:"-x, --proxy, description='the proxy to use [socks5 or ssh://user:passwd@host:port]'"`
 	} `goptions:"sftp"`
 }
 
@@ -92,12 +92,16 @@ func defaultGet(opt options) {
 	}
 
 	if opt.Get.Proxy != "" {
-		p, err := url.Parse(opt.Get.Proxy)
+		p, err := CreateProxy(opt.Get.Proxy)
 		if err != nil {
-			log.Fatal(err, "Proxy format error")
+			log.Fatal(err, "proxy format error")
 		}
 
 		proxy = p
+
+		if p.Scheme != "http" && p.Scheme != "socks5" {
+			log.Fatalf("http get mode do not support this kind of proxy: %s", p.Scheme)
+		}
 	}
 }
 
@@ -120,11 +124,39 @@ func defaultSftp(opt options) {
 	} else {
 		port = opt.Sftp.Port
 	}
+
+	if opt.Sftp.Proxy != "" {
+		p, err := CreateProxy(opt.Sftp.Proxy)
+		if err != nil {
+			log.Fatal(err, "proxy format error")
+		}
+
+		proxy = p
+
+		if p.Scheme != "ssh" && p.Scheme != "socks5" {
+			log.Fatalf("sftp mode do not support this kind of proxy: %s", p.Scheme)
+		}
+	}
 }
 
+// File is used to kept file path and size
 type File struct {
 	Path string
 	Size int64
+}
+
+// ByteCountDecimal human readable file size
+func ByteCountDecimal(b int64) string {
+	const unit = 1000
+	if b < unit {
+		return fmt.Sprintf("%d B", b)
+	}
+	div, exp := int64(unit), 0
+	for n := b / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %cB", float64(b)/float64(div), "kMGTPE"[exp])
 }
 
 func main() {
@@ -173,7 +205,7 @@ func main() {
 
 		client := &ClientConfig{
 			Host:     host,
-			Port:     port,
+			Port:     fmt.Sprintf("%v", port),
 			Username: options.Sftp.Username,
 			Password: options.Sftp.Passwd,
 		}

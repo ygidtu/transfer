@@ -12,34 +12,21 @@ import (
 	pb "github.com/cheggaaa/pb/v3"
 	"github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
+	px "golang.org/x/net/proxy"
 )
-
-// ByteCountDecimal human readable file size
-func ByteCountDecimal(b int64) string {
-	const unit = 1000
-	if b < unit {
-		return fmt.Sprintf("%d B", b)
-	}
-	div, exp := int64(unit), 0
-	for n := b / unit; n >= unit; n /= unit {
-		div *= unit
-		exp++
-	}
-	return fmt.Sprintf("%.1f %cB", float64(b)/float64(div), "kMGTPE"[exp])
-}
 
 //连接的配置
 type ClientConfig struct {
 	Host       string       //ip
-	Port       int          // 端口
+	Port       string       // 端口
 	Username   string       //用户名
 	Password   string       //密码
 	sshClient  *ssh.Client  //ssh client
 	sftpClient *sftp.Client //sftp client
 }
 
-// generateConfig by id_rsa or password
-func generateConfig(password string) ([]ssh.AuthMethod, error) {
+// sshAuth
+func sshConfig(username, password string) (*ssh.ClientConfig, error) {
 	id_rsa := filepath.Join(os.Getenv("HOME"), ".ssh", "id_rsa")
 	methods := []ssh.AuthMethod{}
 	if _, err := os.Stat(id_rsa); !os.IsNotExist(err) {
@@ -68,35 +55,99 @@ func generateConfig(password string) ([]ssh.AuthMethod, error) {
 		methods = append(methods, ssh.Password(password))
 	}
 
-	return methods, nil
-}
-
-// Connect connect to server
-func (cliConf *ClientConfig) Connect() error {
-	auth, err := generateConfig(cliConf.Password)
-	if err != nil {
-		return fmt.Errorf("failed to create client config: %s", err)
-	}
-
-	clientConfig := &ssh.ClientConfig{
-		User: cliConf.Username,
-		Auth: auth,
+	return &ssh.ClientConfig{
+		User: username,
+		Auth: methods,
 		// Timeout: 30 * time.Second,
 		HostKeyCallback: func(hostname string, remote net.Addr, key ssh.PublicKey) error {
 			return nil
 		},
+	}, nil
+}
+
+// sshClient generate a ssh client by id_rsa or password
+func sshClient(username, password, host, port string) (*ssh.Client, error) {
+
+	config, err := sshConfig(username, password)
+	if err != nil {
+		return nil, err
 	}
 
 	// connet to ssh
-	addr := fmt.Sprintf("%s:%d", cliConf.Host, cliConf.Port)
-
-	conn, err := ssh.Dial("tcp", addr, clientConfig)
+	conn, err := ssh.Dial("tcp", fmt.Sprintf("%s:%v", host, port), config)
 	if err != nil {
-		return fmt.Errorf("failed to dial: %s", err)
+		return nil, fmt.Errorf("failed to dial: %s", err)
 	}
-	cliConf.sshClient = conn
 
-	client, err := sftp.NewClient(conn)
+	return conn, nil
+}
+
+func sshClientConn(conn net.Conn, username, password, host, port string) (*ssh.Client, error) {
+	config, err := sshConfig(username, password)
+	if err != nil {
+		return nil, err
+	}
+
+	c, chans, reqs, err := ssh.NewClientConn(conn, fmt.Sprintf("%s:%v", host, port), config)
+
+	if err != nil {
+		return nil, err
+	}
+
+	return ssh.NewClient(c, chans, reqs), nil
+}
+
+// Connect connect to server
+func (cliConf *ClientConfig) Connect() error {
+
+	if proxy == nil {
+		client, err := sshClient(cliConf.Username, cliConf.Password, cliConf.Host, cliConf.Port)
+
+		if err != nil {
+			return err
+		}
+		cliConf.sshClient = client
+	} else if proxy.Scheme == "ssh" { // ssh proxy
+		// dial to proxy server
+		proxyClient, err := sshClient(proxy.Username, proxy.Password, proxy.Host, proxy.Port)
+
+		if err != nil {
+			return err
+		}
+
+		// generate connection through proxy server
+		conn, err := proxyClient.Dial("tcp", fmt.Sprintf("%s:%v", cliConf.Host, cliConf.Port))
+
+		if err != nil {
+			return err
+		}
+
+		client, err := sshClientConn(conn, cliConf.Username, cliConf.Password, cliConf.Host, cliConf.Port)
+		if err != nil {
+			return err
+		}
+
+		cliConf.sshClient = client
+	} else if proxy.Scheme == "socks5" {
+		dialer, err := px.SOCKS5("tcp", proxy.Addr(), nil, px.Direct)
+		if err != nil {
+			return err
+		}
+
+		conn, err := dialer.Dial("tcp", fmt.Sprintf("%s:%v", cliConf.Host, cliConf.Port))
+		if err != nil {
+			return err
+		}
+
+		client, err := sshClientConn(conn, cliConf.Username, cliConf.Password, cliConf.Host, cliConf.Port)
+		if err != nil {
+			return err
+		}
+
+		cliConf.sshClient = client
+	}
+
+	client, err := sftp.NewClient(cliConf.sshClient)
 	if err != nil {
 		return fmt.Errorf("failed to create client: %s", err)
 	}

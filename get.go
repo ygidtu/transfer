@@ -24,7 +24,7 @@ func GetList() ([]File, error) {
 
 	if proxy != nil {
 		client.Transport = &http.Transport{
-			Proxy:           http.ProxyURL(proxy),
+			Proxy:           http.ProxyURL(proxy.URL),
 			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 		}
 	}
@@ -92,7 +92,7 @@ func Download(file File) error {
 	if proxy != nil {
 
 		client.Transport = &http.Transport{
-			Proxy:           http.ProxyURL(proxy),
+			Proxy:           http.ProxyURL(proxy.URL),
 			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 		}
 	}
