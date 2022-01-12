@@ -41,6 +41,7 @@ type options struct {
 		Remote   string `goptions:"-r, --remote, obligatory,description='remote path in server'"`
 		Pull     bool   `goptions:"--pull, description='pull files from server'"`
 		Proxy    string `goptions:"-x, --proxy, description='the proxy to use [socks5 or ssh://user:passwd@host:port]'"`
+		Cover    bool   `goptions:"-c, --cover, description='cover old files if exists'"`
 		Download bool   `goptions:"--download, description='download file and save to server'"`
 		ProxyD   string `goptions:"--download-proxy, description='the proxy used to download file [socks5 or http]'"`
 	} `goptions:"sftp"`
@@ -212,12 +213,6 @@ func main() {
 			log.Fatalf("wrong format of ssh server [%s]:  %s", host, err)
 		}
 
-		if options.Sftp.Pull {
-			log.Infof("Pull %s:%s to %s", host, options.Sftp.Remote, options.Sftp.Path)
-		} else {
-			log.Infof("Push %s to %s:%s", options.Sftp.Path, host, options.Sftp.Remote)
-		}
-
 		client := &ClientConfig{Host: remote}
 
 		if err := client.Connect(); err != nil {
@@ -232,7 +227,7 @@ func main() {
 		var files []File
 
 		if options.Sftp.Download {
-			if err := client.PushDownload(options.Sftp.Path, options.Sftp.Remote); err != nil {
+			if err := client.PushDownload(options.Sftp.Path, options.Sftp.Remote, options.Sftp.Cover); err != nil {
 				log.Fatal(err)
 			}
 		} else if options.Sftp.Pull {
@@ -250,14 +245,14 @@ func main() {
 		}
 
 		for idx, f := range files {
-			log.Infof("[%d/%d] %s", idx+1, len(files), f.Path)
-
 			if options.Sftp.Pull {
-				if err := client.Download(f, filepath.Join(options.Sftp.Path, f.Path)); err != nil {
+				log.Infof("[%d/%d] %s <- %s", idx+1, len(files), f.Path, filepath.Join(options.Sftp.Path, f.Path))
+				if err := client.Download(f, filepath.Join(options.Sftp.Path, f.Path), options.Sftp.Cover); err != nil {
 					log.Warn(err)
 				}
 			} else {
-				if err := client.Upload(f, filepath.Join(options.Sftp.Remote, f.Path)); err != nil {
+				log.Infof("[%d/%d] %s -> %s", idx+1, len(files), f.Path, filepath.Join(options.Sftp.Remote, f.Path))
+				if err := client.Upload(f, filepath.Join(options.Sftp.Remote, f.Path), options.Sftp.Cover); err != nil {
 					log.Warn(err)
 				}
 			}

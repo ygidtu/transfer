@@ -24,6 +24,7 @@ Verbs:
         -r, --remote         remote path in server (*)
             --pull           pull files from server
         -x, --proxy          the proxy to use [socks5 or ssh://user:passwd@host:port]
+        -c, --cover          cover old files if exists
             --download       download file and save to server
             --download-proxy the proxy used to download file [socks5 or http]
 ```

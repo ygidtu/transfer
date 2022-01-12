@@ -185,13 +185,17 @@ func (cliConf *ClientConfig) MkParent(path string, upload bool) error {
 }
 
 // Upload create or resume upload file
-func (cliConf *ClientConfig) Upload(srcPath File, dstPath string) error {
+func (cliConf *ClientConfig) Upload(srcPath File, dstPath string, cover bool) error {
 	err := cliConf.MkParent(dstPath, true)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to create parent directory for %s: %v", dstPath, err)
 	}
 
-	srcFile, _ := os.Open(filepath.Join(path, srcPath.Path)) //本地
+	// 本地
+	srcFile, _ := os.Open(filepath.Join(path, srcPath.Path))
+	if path == srcPath.Path {
+		srcFile, _ = os.Open(srcPath.Path)
+	}
 
 	// append file
 	dstFile, err := cliConf.sftpClient.OpenFile(dstPath, os.O_APPEND|os.O_WRONLY|os.O_CREATE) //远程
@@ -206,16 +210,19 @@ func (cliConf *ClientConfig) Upload(srcPath File, dstPath string) error {
 
 	var seek int64 = 0
 	if stat, err := cliConf.sftpClient.Stat(dstPath); !os.IsNotExist(err) {
-		if stat.Size() < srcPath.Size && stat.Size() > 0 {
+		if cover {
+			log.Infof("cover the old file: %s", dstPath)
+			dstFile, err = cliConf.sftpClient.OpenFile(dstPath, os.O_TRUNC|os.O_WRONLY|os.O_CREATE) //远程
+			if err != nil {
+				return fmt.Errorf("failed to open %s on server: %s", dstPath, err)
+			}
+		} else if stat.Size() < srcPath.Size && stat.Size() > 0 {
 			log.Infof("Resume %s from %s", dstPath, ByteCountDecimal(stat.Size()))
 			seek = stat.Size()
-		}
-		if stat.Size() == srcPath.Size {
+		} else if stat.Size() == srcPath.Size {
 			log.Infof("Skip: %s", dstPath)
 			return nil
-		}
-
-		if stat.Size() > srcPath.Size {
+		} else if stat.Size() > srcPath.Size {
 			log.Warnf("%s is corrupted", dstPath)
 			if err := cliConf.sftpClient.Remove(dstPath); err != nil {
 				return fmt.Errorf("failed to remove %s: %s", dstPath, err)
@@ -242,12 +249,16 @@ func (cliConf *ClientConfig) Upload(srcPath File, dstPath string) error {
 }
 
 // Download pull file from server
-func (cliConf *ClientConfig) Download(srcPath File, dstPath string) error {
+func (cliConf *ClientConfig) Download(srcPath File, dstPath string, cover bool) error {
 	err := cliConf.MkParent(dstPath, false)
 	if err != nil {
 		return err
 	}
+
 	srcFile, _ := cliConf.sftpClient.Open(filepath.Join(path, srcPath.Path))
+	if path == srcPath.Path {
+		srcFile, _ = cliConf.sftpClient.Open(srcPath.Path)
+	}
 
 	dstFile, err := os.OpenFile(dstPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0755)
 	if err != nil {
@@ -260,16 +271,19 @@ func (cliConf *ClientConfig) Download(srcPath File, dstPath string) error {
 
 	var seek int64 = 0
 	if stat, err := os.Stat(dstPath); !os.IsNotExist(err) {
-		if stat.Size() < srcPath.Size && stat.Size() > 0 {
+		if cover {
+			log.Infof("cover the old file: %s", dstPath)
+			dstFile, err = os.OpenFile(dstPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0755)
+			if err != nil {
+				return fmt.Errorf("failed to open %s on server: %s", dstPath, err)
+			}
+		} else if stat.Size() < srcPath.Size && stat.Size() > 0 {
 			log.Infof("Resume %s from %s", dstPath, ByteCountDecimal(stat.Size()))
 			seek = stat.Size()
-		}
-		if stat.Size() == srcPath.Size {
+		} else if stat.Size() == srcPath.Size {
 			log.Infof("Skip: %s", dstPath)
 			return nil
-		}
-
-		if stat.Size() > srcPath.Size {
+		} else if stat.Size() > srcPath.Size {
 			log.Warnf("%s is corrupted", dstPath)
 			if err := os.Remove(dstPath); err != nil {
 				return fmt.Errorf("failed to remove %s: %s", dstPath, err)
@@ -300,17 +314,23 @@ func (cliConf *ClientConfig) GetFiles(path string, pull bool) ([]File, error) {
 	files := []File{}
 	if pull { // pull from server
 		// walk a directory
-		w := cliConf.sftpClient.Walk(path)
-		for w.Step() {
-			if w.Err() != nil {
-				log.Warn(w.Err())
-			}
+		if stat, err := cliConf.sftpClient.Stat(path); os.IsNotExist(err) {
+			return files, fmt.Errorf("%s not exists: %v", path, err)
+		} else if stat.IsDir() {
+			w := cliConf.sftpClient.Walk(path)
+			for w.Step() {
+				if w.Err() != nil {
+					log.Warn(w.Err())
+				}
 
-			if !w.Stat().IsDir() {
-				p := strings.ReplaceAll(w.Path(), path, "")
-				p = strings.TrimLeft(p, "/")
-				files = append(files, File{Path: p, Size: w.Stat().Size()})
+				if !w.Stat().IsDir() {
+					p := strings.ReplaceAll(w.Path(), path, "")
+					p = strings.TrimLeft(p, "/")
+					files = append(files, File{Path: p, Size: w.Stat().Size()})
+				}
 			}
+		} else {
+			files = append(files, File{Path: path, Size: stat.Size()})
 		}
 
 		return files, nil
@@ -320,7 +340,7 @@ func (cliConf *ClientConfig) GetFiles(path string, pull bool) ([]File, error) {
 }
 
 // PushDownload
-func (cliConf *ClientConfig) PushDownload(url, dstPath string) error {
+func (cliConf *ClientConfig) PushDownload(url, dstPath string, cover bool) error {
 	srcPath, err := newURL(url)
 	if err != nil {
 		return err
@@ -344,7 +364,8 @@ func (cliConf *ClientConfig) PushDownload(url, dstPath string) error {
 	}()
 
 	if stat, err := cliConf.sftpClient.Stat(dstPath); !os.IsNotExist(err) {
-		if !srcPath.Resume {
+		if cover || !srcPath.Resume {
+			log.Infof("cover the old file: %s", dstPath)
 			if err := cliConf.sftpClient.Remove(dstPath); err != nil {
 				return fmt.Errorf("failed to remove %s: %s", dstPath, err)
 			}

@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -10,17 +11,29 @@ import (
 
 func listFiles() ([]File, error) {
 	files := []File{}
-	err := filepath.Walk(path, func(p string, info os.FileInfo, err error) error {
 
-		if !info.IsDir() {
-			p = strings.ReplaceAll(p, path, "")
-			p = strings.TrimLeft(p, "/")
+	if stat, err := os.Stat(path); os.IsNotExist(err) {
+		return files, fmt.Errorf("%s not exists: %v", path, err)
+	} else {
+		if stat.IsDir() {
+			if err := filepath.Walk(path, func(p string, info os.FileInfo, err error) error {
 
-			files = append(files, File{Path: p, Size: info.Size()})
+				if !info.IsDir() {
+					p = strings.ReplaceAll(p, path, "")
+					p = strings.TrimLeft(p, "/")
+
+					files = append(files, File{Path: p, Size: info.Size()})
+				}
+				return nil
+			}); err != nil {
+				return files, err
+			}
+		} else {
+			files = append(files, File{Path: path, Size: stat.Size()})
 		}
-		return nil
-	})
-	return files, err
+	}
+
+	return files, nil
 }
 
 // ListFiles as name says list all files under direcory
