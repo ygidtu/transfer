@@ -65,12 +65,11 @@ func Download(file File) error {
 		}
 	}
 
-	req, err := http.NewRequest(http.MethodGet, u, nil)
+	req, err := newURL(u)
 	if err != nil {
 		return err
 	}
 
-	var startByte int64 = 0
 	if stat, err := os.Stat(output); !os.IsNotExist(err) {
 		if stat.Size() == file.Size {
 			log.Info("download complete")
@@ -80,28 +79,9 @@ func Download(file File) error {
 			os.Remove(output)
 		} else {
 			log.Infof("Resume %s from %s", output, ByteCountDecimal(stat.Size()))
-			startByte = stat.Size()
+			req.seek(stat.Size())
 		}
 	}
-
-	// set request range
-	req.Header.Set("Range", fmt.Sprintf("bytes=%d-", startByte))
-
-	// create client
-	client := &http.Client{}
-	if proxy != nil {
-
-		client.Transport = &http.Transport{
-			Proxy:           http.ProxyURL(proxy.URL),
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-		}
-	}
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
 
 	// save to file
 	f, err := os.OpenFile(output, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
@@ -111,11 +91,11 @@ func Download(file File) error {
 	w := bufio.NewWriter(f)
 
 	// set progress bar
-	bar := pb.New64(file.Size - startByte)
+	bar := pb.New64(req.Size)
 	bar.Set(pb.Bytes, true)
 
 	bar.Start()
-	barReader := bar.NewProxyReader(resp.Body)
+	barReader := bar.NewProxyReader(req.Body)
 	_, err = io.Copy(w, barReader)
 	if err != nil {
 		return err
@@ -123,6 +103,7 @@ func Download(file File) error {
 	bar.Finish()
 	w.Flush()
 	f.Close()
+	req.Body.Close()
 
 	if stat, err := os.Stat(output); !os.IsNotExist(err) {
 		if stat.Size() != file.Size {

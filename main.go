@@ -11,11 +11,12 @@ import (
 )
 
 var (
-	path  string
-	host  string
-	port  int
-	log   *zap.SugaredLogger
-	proxy *Proxy
+	path      string
+	host      string
+	port      int
+	log       *zap.SugaredLogger
+	proxy     *Proxy
+	sftpProxy *Proxy
 )
 
 // comand line parameters
@@ -35,14 +36,13 @@ type options struct {
 		Proxy string `goptions:"-x, --proxy, description='the proxy to use [http or socks5]'"`
 	} `goptions:"get"`
 	Sftp struct {
-		Path     string `goptions:"-l, --local, description='the local path'"`
-		Host     string `goptions:"-h, --host, obligatory,description='the ip address to listern'"`
-		Port     int    `goptions:"-p, --port, description='the port of ssh [default: 22]'"`
+		Path     string `goptions:"-l, --local, description='the local path or url'"`
+		Host     string `goptions:"-h, --host, obligatory,description='the remote server [user:passwd@host:port]]'"`
 		Remote   string `goptions:"-r, --remote, obligatory,description='remote path in server'"`
-		Username string `goptions:"-u, --user, obligatory,description='the username'"`
-		Passwd   string `goptions:"-w, --password, description='the password of user [optional, default will try with id_rsa config]'"`
 		Pull     bool   `goptions:"--pull, description='pull files from server'"`
 		Proxy    string `goptions:"-x, --proxy, description='the proxy to use [socks5 or ssh://user:passwd@host:port]'"`
+		Download bool   `goptions:"--download, description='download file and save to server'"`
+		ProxyD   string `goptions:"--download-proxy, description='the proxy used to download file [socks5 or http]'"`
 	} `goptions:"sftp"`
 }
 
@@ -108,6 +108,9 @@ func defaultGet(opt options) {
 // process and set push options
 func defaultSftp(opt options) {
 	host = opt.Sftp.Host
+	if !strings.HasPrefix(host, "ssh") {
+		host = fmt.Sprintf("ssh://%s", host)
+	}
 
 	if opt.Sftp.Path == "" {
 		opt.Sftp.Path = "./"
@@ -119,22 +122,29 @@ func defaultSftp(opt options) {
 		path = opt.Sftp.Path
 	}
 
-	if opt.Sftp.Port == 0 {
-		port = 22
-	} else {
-		port = opt.Sftp.Port
-	}
-
 	if opt.Sftp.Proxy != "" {
 		p, err := CreateProxy(opt.Sftp.Proxy)
 		if err != nil {
 			log.Fatal(err, "proxy format error")
 		}
 
-		proxy = p
+		sftpProxy = p
 
 		if p.Scheme != "ssh" && p.Scheme != "socks5" {
 			log.Fatalf("sftp mode do not support this kind of proxy: %s", p.Scheme)
+		}
+	}
+
+	if opt.Sftp.ProxyD != "" {
+		p, err := CreateProxy(opt.Sftp.ProxyD)
+		if err != nil {
+			log.Fatal(err, "proxy format error")
+		}
+
+		proxy = p
+
+		if p.Scheme != "http" && p.Scheme != "socks5" {
+			log.Fatalf("the download proxy do not support this kind of proxy: %s", p.Scheme)
 		}
 	}
 }
@@ -197,18 +207,18 @@ func main() {
 	} else if options.Verbs == "sftp" {
 		defaultSftp(options)
 
-		if options.Sftp.Pull {
-			log.Infof("Pull %s@%s:%d:%s to %s", options.Sftp.Username, host, port, options.Sftp.Remote, options.Sftp.Path)
-		} else {
-			log.Infof("Push %s to %s@%s:%d:%s", options.Sftp.Path, options.Sftp.Username, host, port, options.Sftp.Remote)
+		remote, err := CreateProxy(host)
+		if err != nil {
+			log.Fatalf("wrong format of ssh server [%s]:  %s", host, err)
 		}
 
-		client := &ClientConfig{
-			Host:     host,
-			Port:     fmt.Sprintf("%v", port),
-			Username: options.Sftp.Username,
-			Password: options.Sftp.Passwd,
+		if options.Sftp.Pull {
+			log.Infof("Pull %s:%s to %s", host, options.Sftp.Remote, options.Sftp.Path)
+		} else {
+			log.Infof("Push %s to %s:%s", options.Sftp.Path, host, options.Sftp.Remote)
 		}
+
+		client := &ClientConfig{Host: remote}
 
 		if err := client.Connect(); err != nil {
 			log.Fatal(err)
@@ -220,7 +230,12 @@ func main() {
 		}
 
 		var files []File
-		if options.Sftp.Pull {
+
+		if options.Sftp.Download {
+			if err := client.PushDownload(options.Sftp.Path, options.Sftp.Remote); err != nil {
+				log.Fatal(err)
+			}
+		} else if options.Sftp.Pull {
 			fs, err := client.GetFiles(options.Sftp.Remote, options.Sftp.Pull)
 			if err != nil {
 				log.Fatal(err)

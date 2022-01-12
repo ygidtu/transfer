@@ -17,10 +17,7 @@ import (
 
 //连接的配置
 type ClientConfig struct {
-	Host       string       //ip
-	Port       string       // 端口
-	Username   string       //用户名
-	Password   string       //密码
+	Host       *Proxy
 	sshClient  *ssh.Client  //ssh client
 	sftpClient *sftp.Client //sftp client
 }
@@ -66,15 +63,15 @@ func sshConfig(username, password string) (*ssh.ClientConfig, error) {
 }
 
 // sshClient generate a ssh client by id_rsa or password
-func sshClient(username, password, host, port string) (*ssh.Client, error) {
+func sshClient(host *Proxy) (*ssh.Client, error) {
 
-	config, err := sshConfig(username, password)
+	config, err := sshConfig(host.Username, host.Password)
 	if err != nil {
 		return nil, err
 	}
 
 	// connet to ssh
-	conn, err := ssh.Dial("tcp", fmt.Sprintf("%s:%v", host, port), config)
+	conn, err := ssh.Dial("tcp", host.Addr(), config)
 	if err != nil {
 		return nil, fmt.Errorf("failed to dial: %s", err)
 	}
@@ -82,13 +79,13 @@ func sshClient(username, password, host, port string) (*ssh.Client, error) {
 	return conn, nil
 }
 
-func sshClientConn(conn net.Conn, username, password, host, port string) (*ssh.Client, error) {
-	config, err := sshConfig(username, password)
+func sshClientConn(conn net.Conn, host *Proxy) (*ssh.Client, error) {
+	config, err := sshConfig(host.Username, host.Password)
 	if err != nil {
 		return nil, err
 	}
 
-	c, chans, reqs, err := ssh.NewClientConn(conn, fmt.Sprintf("%s:%v", host, port), config)
+	c, chans, reqs, err := ssh.NewClientConn(conn, fmt.Sprintf("%s:%v", host.Host, host.Port), config)
 
 	if err != nil {
 		return nil, err
@@ -100,46 +97,48 @@ func sshClientConn(conn net.Conn, username, password, host, port string) (*ssh.C
 // Connect connect to server
 func (cliConf *ClientConfig) Connect() error {
 
-	if proxy == nil {
-		client, err := sshClient(cliConf.Username, cliConf.Password, cliConf.Host, cliConf.Port)
+	if sftpProxy == nil {
+		client, err := sshClient(cliConf.Host)
 
 		if err != nil {
 			return err
 		}
 		cliConf.sshClient = client
-	} else if proxy.Scheme == "ssh" { // ssh proxy
+	} else if sftpProxy.Scheme == "ssh" { // ssh proxy
 		// dial to proxy server
-		proxyClient, err := sshClient(proxy.Username, proxy.Password, proxy.Host, proxy.Port)
+		log.Infof("dail through ssh proxy: %s", sftpProxy.Addr())
+		proxyClient, err := sshClient(sftpProxy)
 
 		if err != nil {
 			return err
 		}
 
 		// generate connection through proxy server
-		conn, err := proxyClient.Dial("tcp", fmt.Sprintf("%s:%v", cliConf.Host, cliConf.Port))
+		conn, err := proxyClient.Dial("tcp", cliConf.Host.Addr())
 
 		if err != nil {
 			return err
 		}
 
-		client, err := sshClientConn(conn, cliConf.Username, cliConf.Password, cliConf.Host, cliConf.Port)
+		client, err := sshClientConn(conn, cliConf.Host)
 		if err != nil {
 			return err
 		}
 
 		cliConf.sshClient = client
-	} else if proxy.Scheme == "socks5" {
-		dialer, err := px.SOCKS5("tcp", proxy.Addr(), nil, px.Direct)
+	} else if sftpProxy.Scheme == "socks5" {
+		log.Infof("dail through socks5 proxy: %s", sftpProxy.Addr())
+		dialer, err := px.SOCKS5("tcp", sftpProxy.Addr(), nil, px.Direct)
 		if err != nil {
 			return err
 		}
 
-		conn, err := dialer.Dial("tcp", fmt.Sprintf("%s:%v", cliConf.Host, cliConf.Port))
+		conn, err := dialer.Dial("tcp", cliConf.Host.Addr())
 		if err != nil {
 			return err
 		}
 
-		client, err := sshClientConn(conn, cliConf.Username, cliConf.Password, cliConf.Host, cliConf.Port)
+		client, err := sshClientConn(conn, cliConf.Host)
 		if err != nil {
 			return err
 		}
@@ -318,4 +317,61 @@ func (cliConf *ClientConfig) GetFiles(path string, pull bool) ([]File, error) {
 	} else { // push to server
 		return listFiles()
 	}
+}
+
+// PushDownload
+func (cliConf *ClientConfig) PushDownload(url, dstPath string) error {
+	srcPath, err := newURL(url)
+	if err != nil {
+		return err
+	}
+
+	dstPath = filepath.Join(dstPath, srcPath.Name)
+
+	err = cliConf.MkParent(dstPath, true)
+	if err != nil {
+		return err
+	}
+
+	// append file
+	dstFile, err := cliConf.sftpClient.OpenFile(dstPath, os.O_APPEND|os.O_WRONLY|os.O_CREATE) //远程
+	if err != nil {
+		return fmt.Errorf("failed to open %s on server: %s", dstPath, err)
+	}
+
+	defer func() {
+		_ = dstFile.Close()
+	}()
+
+	if stat, err := cliConf.sftpClient.Stat(dstPath); !os.IsNotExist(err) {
+		if !srcPath.Resume {
+			if err := cliConf.sftpClient.Remove(dstPath); err != nil {
+				return fmt.Errorf("failed to remove %s: %s", dstPath, err)
+			}
+		} else if stat.Size() < srcPath.Size && stat.Size() > 0 {
+			log.Infof("Resume %s from %s", dstPath, ByteCountDecimal(stat.Size()))
+			srcPath.seek(stat.Size())
+		} else if srcPath.Size == stat.Size() {
+			log.Infof("Skip: %s", dstPath)
+			return nil
+		} else if stat.Size() > srcPath.Size {
+			log.Warnf("%s is corrupted", dstPath)
+			if err := cliConf.sftpClient.Remove(dstPath); err != nil {
+				return fmt.Errorf("failed to remove %s: %s", dstPath, err)
+			}
+		}
+	}
+
+	// start new bar
+	bar := pb.Full.Start64(srcPath.Size)
+
+	// create proxy reader
+	barReader := bar.NewProxyReader(srcPath.Body)
+	_, err = io.Copy(dstFile, barReader)
+
+	srcPath.Body.Close()
+	// finish bar
+	bar.Finish()
+
+	return err
 }
