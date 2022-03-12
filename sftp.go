@@ -9,8 +9,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	pb "github.com/cheggaaa/pb/v3"
 	"github.com/pkg/sftp"
+	"github.com/vbauerster/mpb"
+	"github.com/vbauerster/mpb/decor"
 	"golang.org/x/crypto/ssh"
 	px "golang.org/x/net/proxy"
 )
@@ -185,7 +186,7 @@ func (cliConf *ClientConfig) MkParent(path string, upload bool) error {
 }
 
 // Upload create or resume upload file
-func (cliConf *ClientConfig) Upload(srcPath File, dstPath string, cover bool) error {
+func (cliConf *ClientConfig) Upload(srcPath File, dstPath string, cover bool, p *mpb.Progress, prefix string) error {
 	err := cliConf.MkParent(dstPath, true)
 	if err != nil {
 		return fmt.Errorf("failed to create parent directory for %s: %v", dstPath, err)
@@ -230,26 +231,47 @@ func (cliConf *ClientConfig) Upload(srcPath File, dstPath string, cover bool) er
 		}
 	}
 
-	// start new bar
-	bar := pb.Full.Start64(srcPath.Size - seek)
-	if seek != 0 {
-		if _, err := srcFile.Seek(seek, 0); err != nil {
-			return fmt.Errorf("failed to seed %s: %s", srcPath.Path, err)
-		}
+	if p == nil {
+		p = mpb.New(mpb.WithWidth(64))
 	}
 
-	// create proxy reader
-	barReader := bar.NewProxyReader(srcFile)
+	name := fmt.Sprintf("%s %s", prefix, srcFile.Name())
+	bar := p.AddBar(int64(srcPath.Size-seek),
+		mpb.PrependDecorators(
+			// display our name with one space on the right
+			decor.Name(name, decor.WC{W: len(name) + 1, C: decor.DidentRight}),
+			decor.CountersKibiByte("[% .2f / % .2f] "),
+			// replace ETA decorator with "done" message, OnComplete event
+			decor.OnComplete(
+				decor.AverageETA(decor.ET_STYLE_GO, decor.WC{W: 4}), "done",
+			),
+		),
+		mpb.AppendDecorators(decor.Percentage()),
+	)
+
+	barReader := bar.ProxyReader(srcFile)
+	defer barReader.Close()
+
+	// start new bar
+	// bar := pb.Full.Start64(srcPath.Size - seek)
+	// if seek != 0 {
+	// 	if _, err := srcFile.Seek(seek, 0); err != nil {
+	// 		return fmt.Errorf("failed to seed %s: %s", srcPath.Path, err)
+	// 	}
+	// }
+
+	// // create proxy reader
+	// barReader := bar.NewProxyReader(srcFile)
 	_, err = io.Copy(dstFile, barReader)
 
 	// finish bar
-	bar.Finish()
+	// bar.Finish()
 
 	return err
 }
 
 // Download pull file from server
-func (cliConf *ClientConfig) Download(srcPath File, dstPath string, cover bool) error {
+func (cliConf *ClientConfig) Download(srcPath File, dstPath string, cover bool, p *mpb.Progress, prefix string) error {
 	err := cliConf.MkParent(dstPath, false)
 	if err != nil {
 		return err
@@ -291,20 +313,41 @@ func (cliConf *ClientConfig) Download(srcPath File, dstPath string, cover bool) 
 		}
 	}
 
-	// start new bar
-	bar := pb.Full.Start64(srcPath.Size - seek)
-
-	if seek != 0 {
-		if _, err := srcFile.Seek(seek, 0); err != nil {
-			return fmt.Errorf("failed to seed %s: %s", srcPath.Path, err)
-		}
+	if p == nil {
+		p = mpb.New(mpb.WithWidth(64))
 	}
-	// create proxy reader
-	barReader := bar.NewProxyReader(srcFile)
+
+	name := fmt.Sprintf("%s %s", prefix, srcFile.Name())
+	bar := p.AddBar(int64(srcPath.Size-seek),
+		mpb.PrependDecorators(
+			// display our name with one space on the right
+			decor.Name(name, decor.WC{W: len(name) + 1, C: decor.DidentRight}),
+			decor.CountersKibiByte("[% .2f / % .2f] "),
+			// replace ETA decorator with "done" message, OnComplete event
+			decor.OnComplete(
+				decor.AverageETA(decor.ET_STYLE_GO, decor.WC{W: 4}), "done",
+			),
+		),
+		mpb.AppendDecorators(decor.Percentage()),
+	)
+
+	barReader := bar.ProxyReader(srcFile)
+	defer barReader.Close()
+
+	// start new bar
+	// bar := pb.Full.Start64(srcPath.Size - seek)
+
+	// if seek != 0 {
+	// 	if _, err := srcFile.Seek(seek, 0); err != nil {
+	// 		return fmt.Errorf("failed to seed %s: %s", srcPath.Path, err)
+	// 	}
+	// }
+	// // create proxy reader
+	// barReader := bar.NewProxyReader(srcFile)
 	_, err = io.Copy(dstFile, barReader)
 
 	// finish bar
-	bar.Finish()
+	// bar.Finish()
 
 	return err
 }
@@ -340,7 +383,7 @@ func (cliConf *ClientConfig) GetFiles(path string, pull bool) ([]File, error) {
 }
 
 // PushDownload
-func (cliConf *ClientConfig) PushDownload(url, dstPath string, cover bool) error {
+func (cliConf *ClientConfig) PushDownload(url, dstPath string, cover bool, p *mpb.Progress) error {
 	srcPath, err := newURL(url)
 	if err != nil {
 		return err
@@ -383,16 +426,37 @@ func (cliConf *ClientConfig) PushDownload(url, dstPath string, cover bool) error
 		}
 	}
 
-	// start new bar
-	bar := pb.Full.Start64(srcPath.Size)
+	if p == nil {
+		p = mpb.New(mpb.WithWidth(64))
+	}
 
-	// create proxy reader
-	barReader := bar.NewProxyReader(srcPath.Body)
+	name := filepath.Base(url)
+	bar := p.AddBar(int64(srcPath.Size),
+		mpb.PrependDecorators(
+			// display our name with one space on the right
+			decor.Name(name, decor.WC{W: len(name) + 1, C: decor.DidentRight}),
+			decor.CountersKibiByte("[% .2f / % .2f] "),
+			// replace ETA decorator with "done" message, OnComplete event
+			decor.OnComplete(
+				decor.AverageETA(decor.ET_STYLE_GO, decor.WC{W: 4}), "done",
+			),
+		),
+		mpb.AppendDecorators(decor.Percentage()),
+	)
+
+	barReader := bar.ProxyReader(srcPath.Body)
+	defer barReader.Close()
+
+	// // start new bar
+	// bar := pb.Full.Start64(srcPath.Size)
+
+	// // create proxy reader
+	// barReader := bar.NewProxyReader(srcPath.Body)
 	_, err = io.Copy(dstFile, barReader)
 
 	srcPath.Body.Close()
 	// finish bar
-	bar.Finish()
+	// bar.Finish()
 
 	return err
 }

@@ -5,7 +5,9 @@ import (
 	"net/http"
 	"path/filepath"
 	"strings"
+	"sync"
 
+	"github.com/vbauerster/mpb"
 	"github.com/voxelbrain/goptions"
 	"go.uber.org/zap"
 )
@@ -44,6 +46,7 @@ type options struct {
 		Cover    bool   `goptions:"-c, --cover, description='cover old files if exists'"`
 		Download bool   `goptions:"--download, description='download file and save to server'"`
 		ProxyD   string `goptions:"--download-proxy, description='the proxy used to download file [socks5 or http]'"`
+		Threads  int    `goptions:"-t, --threads, description='the threads to use'"`
 	} `goptions:"sftp"`
 }
 
@@ -58,7 +61,11 @@ func defaultSend(opt options) {
 	if opt.Send.Path == "" {
 		path = "./"
 	} else {
-		path = opt.Send.Path
+		if abs, err := filepath.Abs(opt.Send.Path); err != nil {
+			log.Fatal("The input path cannot convert to absolute: %s : %v", opt.Send.Path, err)
+		} else {
+			path = abs
+		}
 	}
 
 	if opt.Send.Port == 0 {
@@ -83,7 +90,11 @@ func defaultGet(opt options) {
 	if opt.Get.Path == "" {
 		path = "./"
 	} else {
-		path = opt.Get.Path
+		if abs, err := filepath.Abs(opt.Get.Path); err != nil {
+			log.Fatal("The input path cannot convert to absolute: %s : %v", opt.Get.Path, err)
+		} else {
+			path = abs
+		}
 	}
 
 	if opt.Get.Port == 0 {
@@ -120,7 +131,11 @@ func defaultSftp(opt options) {
 	if opt.Sftp.Pull {
 		path = opt.Sftp.Remote
 	} else {
-		path = opt.Sftp.Path
+		if abs, err := filepath.Abs(opt.Sftp.Path); err != nil {
+			log.Fatal("The input path cannot convert to absolute: %s : %v", opt.Sftp.Path, err)
+		} else {
+			path = abs
+		}
 	}
 
 	if opt.Sftp.Proxy != "" {
@@ -148,6 +163,10 @@ func defaultSftp(opt options) {
 			log.Fatalf("the download proxy do not support this kind of proxy: %s", p.Scheme)
 		}
 	}
+
+	if opt.Sftp.Threads == 0 {
+		opt.Sftp.Threads = 1
+	}
 }
 
 // File is used to kept file path and size
@@ -168,6 +187,12 @@ func ByteCountDecimal(b int64) string {
 		exp++
 	}
 	return fmt.Sprintf("%.1f %cB", float64(b)/float64(div), "kMGTPE"[exp])
+}
+
+type Task struct {
+	Source File
+	Target string
+	ID     int
 }
 
 func main() {
@@ -225,9 +250,8 @@ func main() {
 		}
 
 		var files []File
-
 		if options.Sftp.Download {
-			if err := client.PushDownload(options.Sftp.Path, options.Sftp.Remote, options.Sftp.Cover); err != nil {
+			if err := client.PushDownload(options.Sftp.Path, options.Sftp.Remote, options.Sftp.Cover, nil); err != nil {
 				log.Fatal(err)
 			}
 		} else if options.Sftp.Pull {
@@ -244,19 +268,48 @@ func main() {
 			files = append(files, fs...)
 		}
 
+		var wg sync.WaitGroup
+		taskChan := make(chan *Task)
+
+		// passed wg will be accounted at p.Wait() call
+		p := mpb.New(mpb.WithWaitGroup(&wg))
+		wg.Add(options.Sftp.Threads)
+
+		for i := 0; i < options.Sftp.Threads; i++ {
+			// simulating some work
+			go func(pull, cover bool, p *mpb.Progress) {
+				defer wg.Done()
+
+				for {
+					task, ok := <-taskChan
+
+					if !ok {
+						break
+					}
+
+					if pull {
+						if err := client.Download(task.Source, task.Target, cover, p, fmt.Sprintf("[%d/%d]", task.ID, len(files))); err != nil {
+							log.Warn(err)
+						}
+					} else {
+						if err := client.Upload(task.Source, task.Target, cover, p, fmt.Sprintf("[%d/%d]", task.ID, len(files))); err != nil {
+							log.Warn(err)
+						}
+					}
+				}
+			}(options.Sftp.Pull, options.Sftp.Cover, p)
+		}
+
 		for idx, f := range files {
 			if options.Sftp.Pull {
-				log.Infof("[%d/%d] %s <- %s", idx+1, len(files), f.Path, filepath.Join(options.Sftp.Path, f.Path))
-				if err := client.Download(f, filepath.Join(options.Sftp.Path, f.Path), options.Sftp.Cover); err != nil {
-					log.Warn(err)
-				}
+				taskChan <- &Task{f, filepath.Join(options.Sftp.Path, f.Path), idx + 1}
 			} else {
-				log.Infof("[%d/%d] %s -> %s", idx+1, len(files), f.Path, filepath.Join(options.Sftp.Remote, f.Path))
-				if err := client.Upload(f, filepath.Join(options.Sftp.Remote, f.Path), options.Sftp.Cover); err != nil {
-					log.Warn(err)
-				}
+				taskChan <- &Task{f, filepath.Join(options.Sftp.Remote, f.Path), idx + 1}
 			}
 		}
+		close(taskChan)
+		// wait for passed wg and for all bars to complete and flush
+		p.Wait()
 
 		defer client.sftpClient.Close()
 		defer client.sshClient.Close()

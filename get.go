@@ -12,7 +12,8 @@ import (
 	"os"
 	"path/filepath"
 
-	pb "github.com/cheggaaa/pb/v3"
+	"github.com/vbauerster/mpb"
+	"github.com/vbauerster/mpb/decor"
 )
 
 // GetList used by get function to get all files to download
@@ -90,17 +91,30 @@ func Download(file File) error {
 	}
 	w := bufio.NewWriter(f)
 
-	// set progress bar
-	bar := pb.New64(req.Size)
-	bar.Set(pb.Bytes, true)
+	p := mpb.New(mpb.WithWidth(64))
 
-	bar.Start()
-	barReader := bar.NewProxyReader(req.Body)
+	name := filepath.Base(output)
+	bar := p.AddBar(int64(req.Size),
+		mpb.PrependDecorators(
+			// display our name with one space on the right
+			decor.Name(name, decor.WC{W: len(name) + 1, C: decor.DidentRight}),
+			decor.CountersKibiByte("[% .2f / % .2f] "),
+			// replace ETA decorator with "done" message, OnComplete event
+			decor.OnComplete(
+				decor.AverageETA(decor.ET_STYLE_GO, decor.WC{W: 4}), "done",
+			),
+		),
+		mpb.AppendDecorators(decor.Percentage()),
+	)
+
+	barReader := bar.ProxyReader(f)
+	defer barReader.Close()
+
 	_, err = io.Copy(w, barReader)
 	if err != nil {
 		return err
 	}
-	bar.Finish()
+
 	w.Flush()
 	f.Close()
 	req.Body.Close()

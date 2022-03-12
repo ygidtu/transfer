@@ -21,7 +21,6 @@ func listFiles() ([]File, error) {
 				if !info.IsDir() {
 					p = strings.ReplaceAll(p, path, "")
 					p = strings.TrimLeft(p, "/")
-
 					files = append(files, File{Path: p, Size: info.Size()})
 				}
 				return nil
