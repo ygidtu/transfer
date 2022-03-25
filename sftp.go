@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/pkg/sftp"
 	"github.com/vbauerster/mpb"
@@ -16,7 +17,7 @@ import (
 	px "golang.org/x/net/proxy"
 )
 
-//连接的配置
+// ClientConfig 连接的配置
 type ClientConfig struct {
 	Host       *Proxy
 	sshClient  *ssh.Client  //ssh client
@@ -26,8 +27,13 @@ type ClientConfig struct {
 // sshAuth
 func sshConfig(username, password string) (*ssh.ClientConfig, error) {
 	id_rsa := filepath.Join(os.Getenv("HOME"), ".ssh", "id_rsa")
-	methods := []ssh.AuthMethod{}
-	if _, err := os.Stat(id_rsa); !os.IsNotExist(err) {
+	var methods []ssh.AuthMethod
+
+	if password != "" {
+		log.Infof("Auth trhough password")
+		methods = append(methods, ssh.Password(password))
+	} else if _, err := os.Stat(id_rsa); !os.IsNotExist(err) {
+		log.Infof("Auth trhough public key")
 		// var hostKey ssh.PublicKey
 		// A public key may be used to authenticate against the remote
 		// server by using an unencrypted PEM-encoded private key file.
@@ -49,17 +55,11 @@ func sshConfig(username, password string) (*ssh.ClientConfig, error) {
 		methods = append(methods, ssh.PublicKeys(signer))
 	}
 
-	if password != "" {
-		methods = append(methods, ssh.Password(password))
-	}
-
 	return &ssh.ClientConfig{
-		User: username,
-		Auth: methods,
-		// Timeout: 30 * time.Second,
-		HostKeyCallback: func(hostname string, remote net.Addr, key ssh.PublicKey) error {
-			return nil
-		},
+		User:            username,
+		Auth:            methods,
+		Timeout:         10 * time.Second,
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 	}, nil
 }
 
@@ -71,12 +71,12 @@ func sshClient(host *Proxy) (*ssh.Client, error) {
 		return nil, err
 	}
 
-	// connet to ssh
+	// connect to ssh
 	conn, err := ssh.Dial("tcp", host.Addr(), config)
+	log.Infof("connected to %s", host.Addr())
 	if err != nil {
 		return nil, fmt.Errorf("failed to dial: %s", err)
 	}
-
 	return conn, nil
 }
 
@@ -95,7 +95,7 @@ func sshClientConn(conn net.Conn, host *Proxy) (*ssh.Client, error) {
 	return ssh.NewClient(c, chans, reqs), nil
 }
 
-// Connect connect to server
+// Connect to server
 func (cliConf *ClientConfig) Connect() error {
 
 	if sftpProxy == nil {
@@ -252,20 +252,8 @@ func (cliConf *ClientConfig) Upload(srcPath File, dstPath string, cover bool, p 
 	barReader := bar.ProxyReader(srcFile)
 	defer barReader.Close()
 
-	// start new bar
-	// bar := pb.Full.Start64(srcPath.Size - seek)
-	// if seek != 0 {
-	// 	if _, err := srcFile.Seek(seek, 0); err != nil {
-	// 		return fmt.Errorf("failed to seed %s: %s", srcPath.Path, err)
-	// 	}
-	// }
-
-	// // create proxy reader
-	// barReader := bar.NewProxyReader(srcFile)
+	// create proxy reader
 	_, err = io.Copy(dstFile, barReader)
-
-	// finish bar
-	// bar.Finish()
 
 	return err
 }
@@ -334,20 +322,8 @@ func (cliConf *ClientConfig) Download(srcPath File, dstPath string, cover bool, 
 	barReader := bar.ProxyReader(srcFile)
 	defer barReader.Close()
 
-	// start new bar
-	// bar := pb.Full.Start64(srcPath.Size - seek)
-
-	// if seek != 0 {
-	// 	if _, err := srcFile.Seek(seek, 0); err != nil {
-	// 		return fmt.Errorf("failed to seed %s: %s", srcPath.Path, err)
-	// 	}
-	// }
-	// // create proxy reader
-	// barReader := bar.NewProxyReader(srcFile)
+	// create proxy reader
 	_, err = io.Copy(dstFile, barReader)
-
-	// finish bar
-	// bar.Finish()
 
 	return err
 }
@@ -382,7 +358,7 @@ func (cliConf *ClientConfig) GetFiles(path string, pull bool) ([]File, error) {
 	}
 }
 
-// PushDownload
+// PushDownload push a download request to server
 func (cliConf *ClientConfig) PushDownload(url, dstPath string, cover bool, p *mpb.Progress) error {
 	srcPath, err := newURL(url)
 	if err != nil {
@@ -447,16 +423,9 @@ func (cliConf *ClientConfig) PushDownload(url, dstPath string, cover bool, p *mp
 	barReader := bar.ProxyReader(srcPath.Body)
 	defer barReader.Close()
 
-	// // start new bar
-	// bar := pb.Full.Start64(srcPath.Size)
-
-	// // create proxy reader
-	// barReader := bar.NewProxyReader(srcPath.Body)
+	// create proxy reader
 	_, err = io.Copy(dstFile, barReader)
 
 	srcPath.Body.Close()
-	// finish bar
-	// bar.Finish()
-
 	return err
 }

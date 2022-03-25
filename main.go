@@ -21,7 +21,7 @@ var (
 	sftpProxy *Proxy
 )
 
-// comand line parameters
+// command line parameters
 type options struct {
 	Help goptions.Help `goptions:"-h, --help, description='Show this help'"`
 
@@ -51,7 +51,7 @@ type options struct {
 }
 
 // process and set send options
-func defaultSend(opt options) {
+func defaultSend(opt *options) {
 	if opt.Send.Host == "" {
 		host = "0.0.0.0"
 	} else {
@@ -76,7 +76,7 @@ func defaultSend(opt options) {
 }
 
 // process and set get options
-func defaultGet(opt options) {
+func defaultGet(opt *options) {
 	if opt.Get.Host == "" {
 		host = "127.0.0.1"
 	} else {
@@ -118,7 +118,7 @@ func defaultGet(opt options) {
 }
 
 // process and set push options
-func defaultSftp(opt options) {
+func defaultSftp(opt *options) {
 	host = opt.Sftp.Host
 	if !strings.HasPrefix(host, "ssh") {
 		host = fmt.Sprintf("ssh://%s", host)
@@ -200,7 +200,7 @@ func main() {
 	goptions.ParseAndFail(&options)
 
 	if options.Verbs == "send" {
-		defaultSend(options)
+		defaultSend(&options)
 
 		log.Info("path: ", path)
 		log.Info("host: ", host)
@@ -213,7 +213,7 @@ func main() {
 
 		log.Error(http.ListenAndServe(fmt.Sprintf("%v:%v", host, port), nil))
 	} else if options.Verbs == "get" {
-		defaultGet(options)
+		defaultGet(&options)
 
 		log.Info("path: ", path)
 		log.Info("host: ", host)
@@ -231,7 +231,7 @@ func main() {
 			}
 		}
 	} else if options.Verbs == "sftp" {
-		defaultSftp(options)
+		defaultSftp(&options)
 
 		remote, err := CreateProxy(host)
 		if err != nil {
@@ -273,9 +273,9 @@ func main() {
 
 		// passed wg will be accounted at p.Wait() call
 		p := mpb.New(mpb.WithWaitGroup(&wg))
-		wg.Add(options.Sftp.Threads)
 
 		for i := 0; i < options.Sftp.Threads; i++ {
+			wg.Add(1)
 			// simulating some work
 			go func(pull, cover bool, p *mpb.Progress) {
 				defer wg.Done()
