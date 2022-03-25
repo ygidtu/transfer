@@ -58,7 +58,7 @@ func sshConfig(username, password string) (*ssh.ClientConfig, error) {
 	return &ssh.ClientConfig{
 		User:            username,
 		Auth:            methods,
-		Timeout:         10 * time.Second,
+		Timeout:         60 * time.Second,
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 	}, nil
 }
