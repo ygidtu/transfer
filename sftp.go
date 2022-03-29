@@ -11,8 +11,6 @@ import (
 	"time"
 
 	"github.com/pkg/sftp"
-	"github.com/vbauerster/mpb"
-	"github.com/vbauerster/mpb/decor"
 	"golang.org/x/crypto/ssh"
 	px "golang.org/x/net/proxy"
 )
@@ -171,6 +169,12 @@ func (cliConf *ClientConfig) Mkdir(path string) error {
 }
 
 func (cliConf *ClientConfig) MkParent(path string, upload bool) error {
+	if upload {
+		if stat, ok := os.Stat(path); !os.IsNotExist(ok) && !stat.IsDir() {
+			return nil
+		}
+	}
+
 	parent := filepath.Dir(path)
 	if upload {
 		if !cliConf.Exists(parent) {
@@ -186,7 +190,7 @@ func (cliConf *ClientConfig) MkParent(path string, upload bool) error {
 }
 
 // Upload create or resume upload file
-func (cliConf *ClientConfig) Upload(srcPath File, dstPath string, cover bool, p *mpb.Progress, prefix string) error {
+func (cliConf *ClientConfig) Upload(srcPath File, dstPath string, cover bool, prefix string) error {
 	err := cliConf.MkParent(dstPath, true)
 	if err != nil {
 		return fmt.Errorf("failed to create parent directory for %s: %v", dstPath, err)
@@ -231,23 +235,7 @@ func (cliConf *ClientConfig) Upload(srcPath File, dstPath string, cover bool, p 
 		}
 	}
 
-	if p == nil {
-		p = mpb.New(mpb.WithWidth(64))
-	}
-
-	name := fmt.Sprintf("%s %s", prefix, srcFile.Name())
-	bar := p.AddBar(int64(srcPath.Size-seek),
-		mpb.PrependDecorators(
-			// display our name with one space on the right
-			decor.Name(name, decor.WC{W: len(name) + 1, C: decor.DidentRight}),
-			decor.CountersKibiByte("[% .2f / % .2f] "),
-			// replace ETA decorator with "done" message, OnComplete event
-			decor.OnComplete(
-				decor.AverageETA(decor.ET_STYLE_GO, decor.WC{W: 4}), "done",
-			),
-		),
-		mpb.AppendDecorators(decor.Percentage()),
-	)
+	bar := BytesBar(srcPath.Size-seek, fmt.Sprintf("%s %s", prefix, filepath.Base(srcFile.Name())))
 
 	barReader := bar.ProxyReader(srcFile)
 	defer barReader.Close()
@@ -259,7 +247,7 @@ func (cliConf *ClientConfig) Upload(srcPath File, dstPath string, cover bool, p 
 }
 
 // Download pull file from server
-func (cliConf *ClientConfig) Download(srcPath File, dstPath string, cover bool, p *mpb.Progress, prefix string) error {
+func (cliConf *ClientConfig) Download(srcPath File, dstPath string, cover bool, prefix string) error {
 	err := cliConf.MkParent(dstPath, false)
 	if err != nil {
 		return err
@@ -301,23 +289,7 @@ func (cliConf *ClientConfig) Download(srcPath File, dstPath string, cover bool, 
 		}
 	}
 
-	if p == nil {
-		p = mpb.New(mpb.WithWidth(64))
-	}
-
-	name := fmt.Sprintf("%s %s", prefix, srcFile.Name())
-	bar := p.AddBar(int64(srcPath.Size-seek),
-		mpb.PrependDecorators(
-			// display our name with one space on the right
-			decor.Name(name, decor.WC{W: len(name) + 1, C: decor.DidentRight}),
-			decor.CountersKibiByte("[% .2f / % .2f] "),
-			// replace ETA decorator with "done" message, OnComplete event
-			decor.OnComplete(
-				decor.AverageETA(decor.ET_STYLE_GO, decor.WC{W: 4}), "done",
-			),
-		),
-		mpb.AppendDecorators(decor.Percentage()),
-	)
+	bar := BytesBar(srcPath.Size-seek, fmt.Sprintf("%s %s", prefix, filepath.Base(srcFile.Name())))
 
 	barReader := bar.ProxyReader(srcFile)
 	defer barReader.Close()
@@ -359,7 +331,7 @@ func (cliConf *ClientConfig) GetFiles(path string, pull bool) ([]File, error) {
 }
 
 // PushDownload push a download request to server
-func (cliConf *ClientConfig) PushDownload(url, dstPath string, cover bool, p *mpb.Progress) error {
+func (cliConf *ClientConfig) PushDownload(url, dstPath string, cover bool) error {
 	srcPath, err := newURL(url)
 	if err != nil {
 		return err
@@ -402,23 +374,7 @@ func (cliConf *ClientConfig) PushDownload(url, dstPath string, cover bool, p *mp
 		}
 	}
 
-	if p == nil {
-		p = mpb.New(mpb.WithWidth(64))
-	}
-
-	name := filepath.Base(url)
-	bar := p.AddBar(int64(srcPath.Size),
-		mpb.PrependDecorators(
-			// display our name with one space on the right
-			decor.Name(name, decor.WC{W: len(name) + 1, C: decor.DidentRight}),
-			decor.CountersKibiByte("[% .2f / % .2f] "),
-			// replace ETA decorator with "done" message, OnComplete event
-			decor.OnComplete(
-				decor.AverageETA(decor.ET_STYLE_GO, decor.WC{W: 4}), "done",
-			),
-		),
-		mpb.AppendDecorators(decor.Percentage()),
-	)
+	bar := BytesBar(srcPath.Size, filepath.Base(url))
 
 	barReader := bar.ProxyReader(srcPath.Body)
 	defer barReader.Close()

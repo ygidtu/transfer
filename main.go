@@ -3,11 +3,13 @@ package main
 import (
 	"fmt"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
-	"github.com/vbauerster/mpb"
+	"github.com/vbauerster/mpb/v7"
 	"github.com/voxelbrain/goptions"
 	"go.uber.org/zap"
 )
@@ -19,6 +21,7 @@ var (
 	log       *zap.SugaredLogger
 	proxy     *Proxy
 	sftpProxy *Proxy
+	p         *mpb.Progress
 )
 
 // command line parameters
@@ -175,6 +178,10 @@ type File struct {
 	Size int64
 }
 
+func (file *File) Name() string {
+	return filepath.Base(file.Path)
+}
+
 // ByteCountDecimal human readable file size
 func ByteCountDecimal(b int64) string {
 	const unit = 1000
@@ -199,6 +206,7 @@ func main() {
 	var options = options{}
 	goptions.ParseAndFail(&options)
 
+	p = mpb.New(mpb.WithWidth(64), mpb.WithRefreshRate(180*time.Millisecond))
 	if options.Verbs == "send" {
 		defaultSend(&options)
 
@@ -251,7 +259,7 @@ func main() {
 
 		var files []File
 		if options.Sftp.Download {
-			if err := client.PushDownload(options.Sftp.Path, options.Sftp.Remote, options.Sftp.Cover, nil); err != nil {
+			if err := client.PushDownload(options.Sftp.Path, options.Sftp.Remote, options.Sftp.Cover); err != nil {
 				log.Fatal(err)
 			}
 		} else if options.Sftp.Pull {
@@ -272,7 +280,7 @@ func main() {
 		taskChan := make(chan *Task)
 
 		// passed wg will be accounted at p.Wait() call
-		p := mpb.New(mpb.WithWaitGroup(&wg))
+		p = mpb.New(mpb.WithWaitGroup(&wg), mpb.WithRefreshRate(180*time.Millisecond))
 
 		for i := 0; i < options.Sftp.Threads; i++ {
 			wg.Add(1)
@@ -288,11 +296,11 @@ func main() {
 					}
 
 					if pull {
-						if err := client.Download(task.Source, task.Target, cover, p, fmt.Sprintf("[%d/%d]", task.ID, len(files))); err != nil {
+						if err := client.Download(task.Source, task.Target, cover, fmt.Sprintf("[%d/%d]", task.ID, len(files))); err != nil {
 							log.Warn(err)
 						}
 					} else {
-						if err := client.Upload(task.Source, task.Target, cover, p, fmt.Sprintf("[%d/%d]", task.ID, len(files))); err != nil {
+						if err := client.Upload(task.Source, task.Target, cover, fmt.Sprintf("[%d/%d]", task.ID, len(files))); err != nil {
 							log.Warn(err)
 						}
 					}
@@ -304,7 +312,11 @@ func main() {
 			if options.Sftp.Pull {
 				taskChan <- &Task{f, filepath.Join(options.Sftp.Path, f.Path), idx + 1}
 			} else {
-				taskChan <- &Task{f, filepath.Join(options.Sftp.Remote, f.Path), idx + 1}
+				if stat, _ := os.Stat(f.Path); !stat.IsDir() {
+					taskChan <- &Task{f, filepath.Join(options.Sftp.Remote, f.Name()), idx + 1}
+				} else {
+					taskChan <- &Task{f, filepath.Join(options.Sftp.Remote, f.Path), idx + 1}
+				}
 			}
 		}
 		close(taskChan)
