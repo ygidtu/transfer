@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -197,7 +196,7 @@ func ByteCountDecimal(b int64) string {
 }
 
 type Task struct {
-	Source File
+	Source *File
 	Target string
 	ID     int
 }
@@ -239,6 +238,7 @@ func main() {
 			}
 		}
 	} else if options.Verbs == "sftp" {
+		log.Info("Running on sftp mode")
 		defaultSftp(&options)
 
 		remote, err := CreateProxy(host)
@@ -257,7 +257,7 @@ func main() {
 			log.Fatal(err)
 		}
 
-		var files []File
+		var files []*File
 		if options.Sftp.Download {
 			if err := client.PushDownload(options.Sftp.Path, options.Sftp.Remote, options.Sftp.Cover); err != nil {
 				log.Fatal(err)
@@ -312,7 +312,7 @@ func main() {
 			if options.Sftp.Pull {
 				taskChan <- &Task{f, filepath.Join(options.Sftp.Path, f.Path), idx + 1}
 			} else {
-				if stat, _ := os.Stat(f.Path); !stat.IsDir() {
+				if f.Path == path {
 					taskChan <- &Task{f, filepath.Join(options.Sftp.Remote, f.Name()), idx + 1}
 				} else {
 					taskChan <- &Task{f, filepath.Join(options.Sftp.Remote, f.Path), idx + 1}

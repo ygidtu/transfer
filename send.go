@@ -9,8 +9,8 @@ import (
 	"strings"
 )
 
-func listFiles() ([]File, error) {
-	files := []File{}
+func listFiles() ([]*File, error) {
+	var files []*File
 
 	if stat, err := os.Stat(path); os.IsNotExist(err) {
 		return files, fmt.Errorf("%s not exists: %v", path, err)
@@ -21,14 +21,14 @@ func listFiles() ([]File, error) {
 				if !info.IsDir() {
 					p = strings.ReplaceAll(p, path, "")
 					p = strings.TrimLeft(p, "/")
-					files = append(files, File{Path: p, Size: info.Size()})
+					files = append(files, &File{Path: p, Size: info.Size()})
 				}
 				return nil
 			}); err != nil {
 				return files, err
 			}
 		} else {
-			files = append(files, File{Path: path, Size: stat.Size()})
+			files = append(files, &File{Path: path, Size: stat.Size()})
 		}
 	}
 

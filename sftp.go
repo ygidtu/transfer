@@ -190,7 +190,7 @@ func (cliConf *ClientConfig) MkParent(path string, upload bool) error {
 }
 
 // Upload create or resume upload file
-func (cliConf *ClientConfig) Upload(srcPath File, dstPath string, cover bool, prefix string) error {
+func (cliConf *ClientConfig) Upload(srcPath *File, dstPath string, cover bool, prefix string) error {
 	err := cliConf.MkParent(dstPath, true)
 	if err != nil {
 		return fmt.Errorf("failed to create parent directory for %s: %v", dstPath, err)
@@ -247,7 +247,7 @@ func (cliConf *ClientConfig) Upload(srcPath File, dstPath string, cover bool, pr
 }
 
 // Download pull file from server
-func (cliConf *ClientConfig) Download(srcPath File, dstPath string, cover bool, prefix string) error {
+func (cliConf *ClientConfig) Download(srcPath *File, dstPath string, cover bool, prefix string) error {
 	err := cliConf.MkParent(dstPath, false)
 	if err != nil {
 		return err
@@ -301,8 +301,8 @@ func (cliConf *ClientConfig) Download(srcPath File, dstPath string, cover bool, 
 }
 
 // GetFiles as name says collect files
-func (cliConf *ClientConfig) GetFiles(path string, pull bool) ([]File, error) {
-	files := []File{}
+func (cliConf *ClientConfig) GetFiles(path string, pull bool) ([]*File, error) {
+	var files []*File
 	if pull { // pull from server
 		// walk a directory
 		if stat, err := cliConf.sftpClient.Stat(path); os.IsNotExist(err) {
@@ -317,11 +317,11 @@ func (cliConf *ClientConfig) GetFiles(path string, pull bool) ([]File, error) {
 				if !w.Stat().IsDir() {
 					p := strings.ReplaceAll(w.Path(), path, "")
 					p = strings.TrimLeft(p, "/")
-					files = append(files, File{Path: p, Size: w.Stat().Size()})
+					files = append(files, &File{Path: p, Size: w.Stat().Size()})
 				}
 			}
 		} else {
-			files = append(files, File{Path: path, Size: stat.Size()})
+			files = append(files, &File{Path: path, Size: stat.Size()})
 		}
 
 		return files, nil
