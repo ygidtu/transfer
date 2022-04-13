@@ -3,6 +3,7 @@ module transfer
 go 1.16
 
 require (
+	github.com/bramvdbogaerde/go-scp v1.2.0
 	github.com/mattn/go-isatty v0.0.12 // indirect
 	github.com/pkg/sftp v1.13.4
 	github.com/vbauerster/mpb v3.4.0+incompatible

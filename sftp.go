@@ -1,7 +1,12 @@
 package main
 
 import (
+	"context"
 	"fmt"
+	"github.com/bramvdbogaerde/go-scp"
+	"github.com/pkg/sftp"
+	"golang.org/x/crypto/ssh"
+	px "golang.org/x/net/proxy"
 	"io"
 	"io/ioutil"
 	"net"
@@ -9,10 +14,6 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
-
-	"github.com/pkg/sftp"
-	"golang.org/x/crypto/ssh"
-	px "golang.org/x/net/proxy"
 )
 
 // ClientConfig 连接的配置
@@ -20,6 +21,7 @@ type ClientConfig struct {
 	Host       *Proxy
 	sshClient  *ssh.Client  //ssh client
 	sftpClient *sftp.Client //sftp client
+	scpClient  *scp.Client
 }
 
 // sshAuth
@@ -28,10 +30,10 @@ func sshConfig(username, password string) (*ssh.ClientConfig, error) {
 	var methods []ssh.AuthMethod
 
 	if password != "" {
-		log.Infof("Auth trhough password")
+		log.Infof("Auth through password")
 		methods = append(methods, ssh.Password(password))
 	} else if _, err := os.Stat(id_rsa); !os.IsNotExist(err) {
-		log.Infof("Auth trhough public key")
+		log.Infof("Auth through public key")
 		// var hostKey ssh.PublicKey
 		// A public key may be used to authenticate against the remote
 		// server by using an unencrypted PEM-encoded private key file.
@@ -151,7 +153,20 @@ func (cliConf *ClientConfig) Connect() error {
 	}
 	cliConf.sftpClient = client
 
+	client_, err := scp.NewClientBySSH(cliConf.sshClient)
+	if err != nil {
+		return fmt.Errorf("failed to create scp client: %s", err)
+	}
+	cliConf.scpClient = &client_
+
 	return err
+}
+
+func (cliConf *ClientConfig) Close() error {
+	if err := cliConf.sftpClient.Close(); err != nil {
+		return err
+	}
+	return cliConf.sshClient.Close()
 }
 
 // Exists check whether file or directory exists
@@ -190,7 +205,7 @@ func (cliConf *ClientConfig) MkParent(path string, upload bool) error {
 }
 
 // Upload create or resume upload file
-func (cliConf *ClientConfig) Upload(srcPath *File, dstPath string, cover bool, prefix string) error {
+func (cliConf *ClientConfig) Upload(srcPath *File, dstPath string, scp bool, prefix string) error {
 	err := cliConf.MkParent(dstPath, true)
 	if err != nil {
 		return fmt.Errorf("failed to create parent directory for %s: %v", dstPath, err)
@@ -200,6 +215,10 @@ func (cliConf *ClientConfig) Upload(srcPath *File, dstPath string, cover bool, p
 	srcFile, _ := os.Open(filepath.Join(path, srcPath.Path))
 	if path == srcPath.Path {
 		srcFile, _ = os.Open(srcPath.Path)
+	}
+
+	if scp {
+		return cliConf.scpClient.CopyFile(context.Background(), srcFile, dstPath, "0644")
 	}
 
 	// append file
@@ -215,13 +234,7 @@ func (cliConf *ClientConfig) Upload(srcPath *File, dstPath string, cover bool, p
 
 	var seek int64 = 0
 	if stat, err := cliConf.sftpClient.Stat(dstPath); !os.IsNotExist(err) {
-		if cover {
-			log.Infof("cover the old file: %s", dstPath)
-			dstFile, err = cliConf.sftpClient.OpenFile(dstPath, os.O_TRUNC|os.O_WRONLY|os.O_CREATE) //远程
-			if err != nil {
-				return fmt.Errorf("failed to open %s on server: %s", dstPath, err)
-			}
-		} else if stat.Size() < srcPath.Size && stat.Size() > 0 {
+		if stat.Size() < srcPath.Size && stat.Size() > 0 {
 			log.Infof("Resume %s from %s", dstPath, ByteCountDecimal(stat.Size()))
 			seek = stat.Size()
 		} else if stat.Size() == srcPath.Size {
@@ -237,17 +250,22 @@ func (cliConf *ClientConfig) Upload(srcPath *File, dstPath string, cover bool, p
 
 	bar := BytesBar(srcPath.Size-seek, fmt.Sprintf("%s %s", prefix, filepath.Base(srcFile.Name())))
 
+	if _, err := srcFile.Seek(seek, 0); err != nil {
+		return err
+	}
+
 	barReader := bar.ProxyReader(srcFile)
 	defer barReader.Close()
 
 	// create proxy reader
 	_, err = io.Copy(dstFile, barReader)
 
+	//cliConf.scpClient.CopyFile(context.Background(), barReader, dstPath, "0655")
 	return err
 }
 
 // Download pull file from server
-func (cliConf *ClientConfig) Download(srcPath *File, dstPath string, cover bool, prefix string) error {
+func (cliConf *ClientConfig) Download(srcPath *File, dstPath string, scp bool, prefix string) error {
 	err := cliConf.MkParent(dstPath, false)
 	if err != nil {
 		return err
@@ -267,15 +285,16 @@ func (cliConf *ClientConfig) Download(srcPath *File, dstPath string, cover bool,
 		_ = dstFile.Close()
 	}()
 
+	if scp {
+		if path == srcPath.Path {
+			return cliConf.scpClient.CopyFromRemote(context.Background(), dstFile, srcPath.Path)
+		}
+		return cliConf.scpClient.CopyFromRemote(context.Background(), dstFile, filepath.Join(path, srcPath.Path))
+	}
+
 	var seek int64 = 0
 	if stat, err := os.Stat(dstPath); !os.IsNotExist(err) {
-		if cover {
-			log.Infof("cover the old file: %s", dstPath)
-			dstFile, err = os.OpenFile(dstPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0755)
-			if err != nil {
-				return fmt.Errorf("failed to open %s on server: %s", dstPath, err)
-			}
-		} else if stat.Size() < srcPath.Size && stat.Size() > 0 {
+		if stat.Size() < srcPath.Size && stat.Size() > 0 {
 			log.Infof("Resume %s from %s", dstPath, ByteCountDecimal(stat.Size()))
 			seek = stat.Size()
 		} else if stat.Size() == srcPath.Size {
@@ -290,6 +309,10 @@ func (cliConf *ClientConfig) Download(srcPath *File, dstPath string, cover bool,
 	}
 
 	bar := BytesBar(srcPath.Size-seek, fmt.Sprintf("%s %s", prefix, filepath.Base(srcFile.Name())))
+
+	if _, err := srcFile.Seek(seek, 0); err != nil {
+		return err
+	}
 
 	barReader := bar.ProxyReader(srcFile)
 	defer barReader.Close()
@@ -331,7 +354,7 @@ func (cliConf *ClientConfig) GetFiles(path string, pull bool) ([]*File, error) {
 }
 
 // PushDownload push a download request to server
-func (cliConf *ClientConfig) PushDownload(url, dstPath string, cover bool) error {
+func (cliConf *ClientConfig) PushDownload(url, dstPath string) error {
 	srcPath, err := newURL(url)
 	if err != nil {
 		return err
@@ -355,12 +378,7 @@ func (cliConf *ClientConfig) PushDownload(url, dstPath string, cover bool) error
 	}()
 
 	if stat, err := cliConf.sftpClient.Stat(dstPath); !os.IsNotExist(err) {
-		if cover || !srcPath.Resume {
-			log.Infof("cover the old file: %s", dstPath)
-			if err := cliConf.sftpClient.Remove(dstPath); err != nil {
-				return fmt.Errorf("failed to remove %s: %s", dstPath, err)
-			}
-		} else if stat.Size() < srcPath.Size && stat.Size() > 0 {
+		if stat.Size() < srcPath.Size && stat.Size() > 0 {
 			log.Infof("Resume %s from %s", dstPath, ByteCountDecimal(stat.Size()))
 			srcPath.seek(stat.Size())
 		} else if srcPath.Size == stat.Size() {

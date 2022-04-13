@@ -45,7 +45,7 @@ type options struct {
 		Remote   string `goptions:"-r, --remote, obligatory,description='remote path in server'"`
 		Pull     bool   `goptions:"--pull, description='pull files from server'"`
 		Proxy    string `goptions:"-x, --proxy, description='the proxy to use [socks5 or ssh://user:passwd@host:port]'"`
-		Cover    bool   `goptions:"-c, --cover, description='cover old files if exists'"`
+		Scp      bool   `goptions:"-s, --scp, description='transfer throught scp instead of sftp'"`
 		Download bool   `goptions:"--download, description='download file and save to server'"`
 		ProxyD   string `goptions:"--download-proxy, description='the proxy used to download file [socks5 or http]'"`
 		Threads  int    `goptions:"-t, --threads, description='the threads to use'"`
@@ -181,7 +181,7 @@ func (file *File) Name() string {
 	return filepath.Base(file.Path)
 }
 
-// ByteCountDecimal human readable file size
+// ByteCountDecimal human-readable file size
 func ByteCountDecimal(b int64) string {
 	const unit = 1000
 	if b < unit {
@@ -251,6 +251,7 @@ func main() {
 		if err := client.Connect(); err != nil {
 			log.Fatal(err)
 		}
+		defer client.Close()
 
 		// check whether target is exists
 		if err := client.Mkdir(options.Sftp.Remote); err != nil {
@@ -259,7 +260,7 @@ func main() {
 
 		var files []*File
 		if options.Sftp.Download {
-			if err := client.PushDownload(options.Sftp.Path, options.Sftp.Remote, options.Sftp.Cover); err != nil {
+			if err := client.PushDownload(options.Sftp.Path, options.Sftp.Remote); err != nil {
 				log.Fatal(err)
 			}
 		} else if options.Sftp.Pull {
@@ -285,7 +286,7 @@ func main() {
 		for i := 0; i < options.Sftp.Threads; i++ {
 			wg.Add(1)
 			// simulating some work
-			go func(pull, cover bool, p *mpb.Progress) {
+			go func(pull, scp bool, p *mpb.Progress) {
 				defer wg.Done()
 
 				for {
@@ -295,17 +296,28 @@ func main() {
 						break
 					}
 
+					client := &ClientConfig{Host: remote}
+
+					if err := client.Connect(); err != nil {
+						log.Fatal(err)
+					}
+
 					if pull {
-						if err := client.Download(task.Source, task.Target, cover, fmt.Sprintf("[%d/%d]", task.ID, len(files))); err != nil {
+						if err := client.Download(task.Source, task.Target, scp, fmt.Sprintf("[%d/%d]", task.ID, len(files))); err != nil {
 							log.Warn(err)
 						}
 					} else {
-						if err := client.Upload(task.Source, task.Target, cover, fmt.Sprintf("[%d/%d]", task.ID, len(files))); err != nil {
+						if err := client.Upload(task.Source, task.Target, scp, fmt.Sprintf("[%d/%d]", task.ID, len(files))); err != nil {
 							log.Warn(err)
 						}
 					}
+
+					err = client.Close()
+					if err != nil {
+						log.Warn(err)
+					}
 				}
-			}(options.Sftp.Pull, options.Sftp.Cover, p)
+			}(options.Sftp.Pull, options.Sftp.Scp, p)
 		}
 
 		for idx, f := range files {
@@ -323,7 +335,10 @@ func main() {
 		// wait for passed wg and for all bars to complete and flush
 		p.Wait()
 
-		defer client.sftpClient.Close()
-		defer client.sshClient.Close()
+		if err := client.Close(); err != nil {
+			log.Error(err)
+		}
+	} else {
+		goptions.PrintHelp()
 	}
 }

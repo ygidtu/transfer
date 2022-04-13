@@ -3,7 +3,7 @@
 Personal tool used for transfer files between servers.
 
 ```bash
-Usage: transfer [global options] <verb> [verb options]
+Usage: transfer [global options] <verb> [verb options]                                                                                                                                                            ✔  base Py  11:17:06 
 
 Global options:
         -h, --help           Show this help
@@ -24,9 +24,11 @@ Verbs:
         -r, --remote         remote path in server (*)
             --pull           pull files from server
         -x, --proxy          the proxy to use [socks5 or ssh://user:passwd@host:port]
-        -c, --cover          cover old files if exists
+        -s, --scp            transfer throught scp instead of sftp
             --download       download file and save to server
             --download-proxy the proxy used to download file [socks5 or http]
+        -t, --threads        the threads to use
+
 ```
 
 ## Usage
@@ -47,4 +49,7 @@ Verbs:
 # just redirct a http request to server
 ./transfer sftp -l http://to/file --host username:password@x.x.x.x:port -r /path/to/remove/file --download --download-proxy [http or socks5 proxy]
 # password is optional, default will try with id_rsa config
+
+./transfer sftp -l http://to/file --host username:password@x.x.x.x:port --scp -r /path/to/remove/file --download --download-proxy [http or socks5 proxy]
+# this will transfer file through scp, more faster but cannot resume the progress
 ```
