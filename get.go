@@ -46,7 +46,6 @@ func GetList() ([]File, error) {
 func Download(file File) error {
 	output := filepath.Join(path, file.Path)
 	u := fmt.Sprintf("%v:%v/%v", host, port, url.PathEscape(file.Path))
-	log.Info(u)
 	log.Info("start to download: ", file.Path)
 	if u == "" {
 		return fmt.Errorf("empty url")
