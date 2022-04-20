@@ -76,7 +76,7 @@ func Download(file File) error {
 			log.Warnf("%v size [%v] > remote [%v], redownload", output, stat.Size(), file.Size)
 			os.Remove(output)
 		} else {
-			log.Infof("Resume %s from %s", output, ByteCountDecimal(stat.Size()))
+			log.Infof("Resume from %s", ByteCountDecimal(stat.Size()))
 			req.seek(stat.Size())
 		}
 	}

@@ -50,6 +50,6 @@ Verbs:
 ./transfer sftp -l http://to/file --host username:password@x.x.x.x:port -r /path/to/remove/file --download --download-proxy [http or socks5 proxy]
 # password is optional, default will try with id_rsa config
 
-./transfer sftp -l http://to/file --host username:password@x.x.x.x:port --scp -r /path/to/remove/file --download --download-proxy [http or socks5 proxy]
+./transfer sftp -l /path/to/local/file --host username:password@x.x.x.x:port --scp -r /path/to/remove/file --download --download-proxy [http or socks5 proxy]
 # this will transfer file through scp, more faster but cannot resume the progress
 ```
