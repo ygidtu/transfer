@@ -46,6 +46,7 @@ func GetList() ([]File, error) {
 func Download(file File) error {
 	output := filepath.Join(path, file.Path)
 	u := fmt.Sprintf("%v:%v/%v", host, port, url.PathEscape(file.Path))
+	log.Info(u)
 	log.Info("start to download: ", file.Path)
 	if u == "" {
 		return fmt.Errorf("empty url")
@@ -58,7 +59,7 @@ func Download(file File) error {
 	}
 
 	if _, err := os.Stat(outDir); os.IsNotExist(err) {
-		if err := os.MkdirAll(outDir, 0755); err != nil {
+		if err := os.MkdirAll(outDir, os.ModePerm); err != nil {
 			return fmt.Errorf("failed to create %s: %v", outDir, err)
 		}
 	}
@@ -80,27 +81,26 @@ func Download(file File) error {
 			req.seek(stat.Size())
 		}
 	}
+	defer req.Body.Close()
 
 	// save to file
-	f, err := os.OpenFile(output, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	f, err := os.OpenFile(output, os.O_APPEND|os.O_CREATE|os.O_WRONLY, os.ModePerm)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to open %s: %v", output, err)
 	}
+	defer f.Close()
 	w := bufio.NewWriter(f)
+	defer w.Flush()
 
 	bar := BytesBar(req.Size, filepath.Base(output))
 
-	barReader := bar.ProxyReader(f)
+	barReader := bar.ProxyReader(req.Body)
 	defer barReader.Close()
 
 	_, err = io.Copy(w, barReader)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to copy %s: %v", output, err)
 	}
-
-	w.Flush()
-	f.Close()
-	req.Body.Close()
 
 	if stat, err := os.Stat(output); !os.IsNotExist(err) {
 		if stat.Size() != file.Size {
