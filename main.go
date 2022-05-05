@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -28,17 +29,18 @@ type options struct {
 	Help goptions.Help `goptions:"-h, --help, description='Show this help'"`
 
 	goptions.Verbs
-	Send struct {
+	Server struct {
 		Path string `goptions:"-i, --path, description='the path contains files'"`
-		Host string `goptions:"-h, --host, description='the ip address to listern'"`
-		Port int    `goptions:"-p, --port, description='the port to listern'"`
-	} `goptions:"send"`
-	Get struct {
+		Host string `goptions:"-h, --host, description='the ip address to listen'"`
+		Port int    `goptions:"-p, --port, description='the port to listen'"`
+	} `goptions:"server"`
+	Trans struct {
 		Path  string `goptions:"-i, --path, description='the path to save files'"`
 		Host  string `goptions:"-h, --host, description='the target host ip'"`
 		Port  int    `goptions:"-p, --port, description='the target port'"`
 		Proxy string `goptions:"-x, --proxy, description='the proxy to use [http or socks5]'"`
-	} `goptions:"get"`
+		Post  bool   `goptions:"-p, --post, description='the proxy to use [http or socks5]'"`
+	} `goptions:"trans"`
 	Sftp struct {
 		Path     string `goptions:"-l, --local, description='the local path or url'"`
 		Host     string `goptions:"-h, --host, obligatory,description='the remote server [user:passwd@host:port]]'"`
@@ -54,59 +56,59 @@ type options struct {
 
 // process and set send options
 func defaultSend(opt *options) {
-	if opt.Send.Host == "" {
+	if opt.Server.Host == "" {
 		host = "0.0.0.0"
 	} else {
-		host = opt.Send.Host
+		host = opt.Server.Host
 	}
 
-	if opt.Send.Path == "" {
+	if opt.Server.Path == "" {
 		path = "./"
 	} else {
-		if abs, err := filepath.Abs(opt.Send.Path); err != nil {
-			log.Fatal("The input path cannot convert to absolute: %s : %v", opt.Send.Path, err)
+		if abs, err := filepath.Abs(opt.Server.Path); err != nil {
+			log.Fatal("The input path cannot convert to absolute: %s : %v", opt.Server.Path, err)
 		} else {
 			path = abs
 		}
 	}
 
-	if opt.Send.Port == 0 {
+	if opt.Server.Port == 0 {
 		port = 8000
 	} else {
-		port = opt.Send.Port
+		port = opt.Server.Port
 	}
 }
 
 // process and set get options
 func defaultGet(opt *options) {
-	if opt.Get.Host == "" {
+	if opt.Trans.Host == "" {
 		host = "127.0.0.1"
 	} else {
-		host = opt.Get.Host
+		host = opt.Trans.Host
 	}
 
 	if !strings.HasPrefix(host, "http") {
 		host = fmt.Sprintf("http://%v", host)
 	}
 
-	if opt.Get.Path == "" {
+	if opt.Trans.Path == "" {
 		path = "./"
 	} else {
-		if abs, err := filepath.Abs(opt.Get.Path); err != nil {
-			log.Fatal("The input path cannot convert to absolute: %s : %v", opt.Get.Path, err)
+		if abs, err := filepath.Abs(opt.Trans.Path); err != nil {
+			log.Fatal("The input path cannot convert to absolute: %s : %v", opt.Trans.Path, err)
 		} else {
 			path = abs
 		}
 	}
 
-	if opt.Get.Port == 0 {
+	if opt.Trans.Port == 0 {
 		port = 8000
 	} else {
-		port = opt.Get.Port
+		port = opt.Trans.Port
 	}
 
-	if opt.Get.Proxy != "" {
-		p, err := CreateProxy(opt.Get.Proxy)
+	if opt.Trans.Proxy != "" {
+		p, err := CreateProxy(opt.Trans.Proxy)
 		if err != nil {
 			log.Fatal(err, "proxy format error")
 		}
@@ -171,30 +173,6 @@ func defaultSftp(opt *options) {
 	}
 }
 
-// File is used to kept file path and size
-type File struct {
-	Path string
-	Size int64
-}
-
-func (file *File) Name() string {
-	return filepath.Base(file.Path)
-}
-
-// ByteCountDecimal human-readable file size
-func ByteCountDecimal(b int64) string {
-	const unit = 1000
-	if b < unit {
-		return fmt.Sprintf("%d B", b)
-	}
-	div, exp := int64(unit), 0
-	for n := b / unit; n >= unit; n /= unit {
-		div *= unit
-		exp++
-	}
-	return fmt.Sprintf("%.1f %cB", float64(b)/float64(div), "kMGTPE"[exp])
-}
-
 type Task struct {
 	Source *File
 	Target string
@@ -206,7 +184,7 @@ func main() {
 	goptions.ParseAndFail(&options)
 
 	p = mpb.New(mpb.WithWidth(64), mpb.WithRefreshRate(180*time.Millisecond))
-	if options.Verbs == "send" {
+	if options.Verbs == "server" {
 		defaultSend(&options)
 
 		log.Info("path: ", path)
@@ -214,29 +192,51 @@ func main() {
 		log.Info("port: ", port)
 
 		http.HandleFunc("/list", ListFiles)
+		http.HandleFunc("/post", GetFiles)
+
+		if _, err := os.Stat(path); os.IsNotExist(err) {
+			if err := os.MkdirAll(path, os.ModePerm); err != nil {
+				log.Fatal(err)
+			}
+		}
 
 		fs := http.FileServer(http.Dir(path))
 		http.Handle("/", http.StripPrefix("/", fs))
 
 		log.Error(http.ListenAndServe(fmt.Sprintf("%v:%v", host, port), nil))
-	} else if options.Verbs == "get" {
+	} else if options.Verbs == "trans" {
 		defaultGet(&options)
 
 		log.Info("path: ", path)
 		log.Info("host: ", host)
 		log.Info("port: ", port)
 
-		targets, err := GetList()
-		if err != nil {
-			log.Error(err)
-		}
+		if options.Trans.Post {
+			targets, err := listFiles()
+			if err != nil {
+				log.Fatal(err)
+			}
 
-		for idx, file := range targets {
-			log.Infof("[%d/%d] start to download: %v", idx+1, len(targets), file.Path)
-			if err := Download(file); err != nil {
-				log.Warn(err)
+			for idx, file := range targets {
+				log.Infof("[%d/%d] start to post: %v", idx+1, len(targets), file.Path)
+				if err := Post(file); err != nil {
+					log.Warn(err)
+				}
+			}
+		} else {
+			targets, err := GetList()
+			if err != nil {
+				log.Fatal(err)
+			}
+
+			for idx, file := range targets {
+				log.Infof("[%d/%d] start to download: %v", idx+1, len(targets), file.Path)
+				if err := Get(file); err != nil {
+					log.Warn(err)
+				}
 			}
 		}
+
 	} else if options.Verbs == "sftp" {
 		log.Info("Running on sftp mode")
 		defaultSftp(&options)

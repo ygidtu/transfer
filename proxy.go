@@ -16,7 +16,7 @@ type Proxy struct {
 	URL      *url.URL
 }
 
-// Create proxy by string
+// CreateProxy creates a new Proxy by string
 func CreateProxy(proxy string) (*Proxy, error) {
 	u, err := url.Parse(proxy)
 
