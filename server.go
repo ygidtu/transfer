@@ -137,10 +137,10 @@ Get
 */
 
 // GetList used by get function to get all files to download
-func GetList() ([]File, error) {
+func GetList() ([]*File, error) {
 	log.Infof("Get files: %v:%v", host, port)
 
-	var target []File
+	var target []*File
 	client := &http.Client{}
 
 	if proxy != nil {
@@ -166,7 +166,7 @@ func GetList() ([]File, error) {
 }
 
 // Get is function that download links
-func Get(file File) error {
+func Get(file *File) error {
 	output := filepath.Join(path, file.Path)
 	u := fmt.Sprintf("%v:%v/%v", host, port, url.PathEscape(file.Path))
 	log.Info("start to download: ", file.Path)
@@ -254,7 +254,7 @@ func Post(file *File) error {
 	}
 	u := fmt.Sprintf("%v:%v/post?path=%v", host, port, url.PathEscape(input))
 
-	log.Info("start to post: ", input)
+	//log.Info("start to post: ", input)
 	if u == "" {
 		return fmt.Errorf("empty url")
 	}

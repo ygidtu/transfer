@@ -35,11 +35,12 @@ type options struct {
 		Port int    `goptions:"-p, --port, description='the port to listen'"`
 	} `goptions:"server"`
 	Trans struct {
-		Path  string `goptions:"-i, --path, description='the path to save files'"`
-		Host  string `goptions:"-h, --host, description='the target host ip'"`
-		Port  int    `goptions:"-p, --port, description='the target port'"`
-		Proxy string `goptions:"-x, --proxy, description='the proxy to use [http or socks5]'"`
-		Post  bool   `goptions:"-p, --post, description='the proxy to use [http or socks5]'"`
+		Path    string `goptions:"-i, --path, description='the path to save files'"`
+		Host    string `goptions:"-h, --host, description='the target host ip'"`
+		Port    int    `goptions:"-p, --port, description='the target port'"`
+		Proxy   string `goptions:"-x, --proxy, description='the proxy to use [http or socks5]'"`
+		Post    bool   `goptions:"-s, --post, description='the proxy to use [http or socks5]'"`
+		Threads int    `goptions:"-t, --threads, description='the threads to use'"`
 	} `goptions:"trans"`
 	Sftp struct {
 		Path     string `goptions:"-l, --local, description='the local path or url'"`
@@ -105,6 +106,10 @@ func defaultGet(opt *options) {
 		port = 8000
 	} else {
 		port = opt.Trans.Port
+	}
+
+	if opt.Trans.Threads == 0 {
+		opt.Trans.Threads = 1
 	}
 
 	if opt.Trans.Proxy != "" {
@@ -183,7 +188,11 @@ func main() {
 	var options = options{}
 	goptions.ParseAndFail(&options)
 
-	p = mpb.New(mpb.WithWidth(64), mpb.WithRefreshRate(180*time.Millisecond))
+	var wg sync.WaitGroup
+	// passed wg will be accounted at p.Wait() call
+	p = mpb.New(mpb.WithWaitGroup(&wg), mpb.WithRefreshRate(180*time.Millisecond))
+	taskChan := make(chan *Task)
+	var files []*File
 	if options.Verbs == "server" {
 		defaultSend(&options)
 
@@ -212,29 +221,43 @@ func main() {
 		log.Info("port: ", port)
 
 		if options.Trans.Post {
-			targets, err := listFiles()
+			target, err := listFiles()
 			if err != nil {
 				log.Fatal(err)
 			}
-
-			for idx, file := range targets {
-				log.Infof("[%d/%d] start to post: %v", idx+1, len(targets), file.Path)
-				if err := Post(file); err != nil {
-					log.Warn(err)
-				}
-			}
+			files = append(files, target...)
 		} else {
-			targets, err := GetList()
+			target, err := GetList()
 			if err != nil {
 				log.Fatal(err)
 			}
+			files = append(files, target...)
+		}
 
-			for idx, file := range targets {
-				log.Infof("[%d/%d] start to download: %v", idx+1, len(targets), file.Path)
-				if err := Get(file); err != nil {
-					log.Warn(err)
+		for i := 0; i < options.Trans.Threads; i++ {
+			wg.Add(1)
+			// simulating some work
+			go func(post bool) {
+				defer wg.Done()
+				for {
+					file, ok := <-taskChan
+
+					if !ok {
+						break
+					}
+					if post {
+						log.Infof("[%d/%d] start to post: %v", file.ID, len(files), file.Source.Path)
+						if err := Post(file.Source); err != nil {
+							log.Warn(err)
+						}
+					} else {
+						log.Infof("[%d/%d] start to download: %v", file.ID, len(files), file.Source.Path)
+						if err := Get(file.Source); err != nil {
+							log.Warn(err)
+						}
+					}
 				}
-			}
+			}(options.Trans.Post)
 		}
 
 	} else if options.Verbs == "sftp" {
@@ -258,7 +281,6 @@ func main() {
 			log.Fatal(err)
 		}
 
-		var files []*File
 		if options.Sftp.Download {
 			if err := client.PushDownload(options.Sftp.Path, options.Sftp.Remote); err != nil {
 				log.Fatal(err)
@@ -277,16 +299,10 @@ func main() {
 			files = append(files, fs...)
 		}
 
-		var wg sync.WaitGroup
-		taskChan := make(chan *Task)
-
-		// passed wg will be accounted at p.Wait() call
-		p = mpb.New(mpb.WithWaitGroup(&wg), mpb.WithRefreshRate(180*time.Millisecond))
-
 		for i := 0; i < options.Sftp.Threads; i++ {
 			wg.Add(1)
 			// simulating some work
-			go func(pull, scp bool, p *mpb.Progress) {
+			go func(pull, scp bool) {
 				defer wg.Done()
 
 				for {
@@ -317,28 +333,25 @@ func main() {
 						log.Warn(err)
 					}
 				}
-			}(options.Sftp.Pull, options.Sftp.Scp, p)
-		}
-
-		for idx, f := range files {
-			if options.Sftp.Pull {
-				taskChan <- &Task{f, filepath.Join(options.Sftp.Path, f.Path), idx + 1}
-			} else {
-				if f.Path == path {
-					taskChan <- &Task{f, filepath.Join(options.Sftp.Remote, f.Name()), idx + 1}
-				} else {
-					taskChan <- &Task{f, filepath.Join(options.Sftp.Remote, f.Path), idx + 1}
-				}
-			}
-		}
-		close(taskChan)
-		// wait for passed wg and for all bars to complete and flush
-		p.Wait()
-
-		if err := client.Close(); err != nil {
-			log.Error(err)
+			}(options.Sftp.Pull, options.Sftp.Scp)
 		}
 	} else {
 		goptions.PrintHelp()
 	}
+
+	for idx, f := range files {
+		if options.Sftp.Pull {
+			taskChan <- &Task{f, filepath.Join(options.Sftp.Path, f.Path), idx + 1}
+		} else {
+			if f.Path == path {
+				taskChan <- &Task{f, filepath.Join(options.Sftp.Remote, f.Name()), idx + 1}
+			} else {
+				taskChan <- &Task{f, filepath.Join(options.Sftp.Remote, f.Path), idx + 1}
+			}
+		}
+	}
+
+	close(taskChan)
+	// wait for passed wg and for all bars to complete and flush
+	p.Wait()
 }
