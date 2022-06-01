@@ -22,6 +22,7 @@ var (
 	proxy     *Proxy
 	sftpProxy *Proxy
 	p         *mpb.Progress
+	jsonLog   string
 )
 
 // command line parameters
@@ -187,6 +188,8 @@ type Task struct {
 func main() {
 	var options = options{}
 	goptions.ParseAndFail(&options)
+
+	jsonLog = "transfer_json_filelist.json"
 
 	var wg sync.WaitGroup
 	// passed wg will be accounted at p.Wait() call
