@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/bramvdbogaerde/go-scp"
 	"github.com/pkg/sftp"
+	"github.com/vbauerster/mpb/v7"
 	"golang.org/x/crypto/ssh"
 	px "golang.org/x/net/proxy"
 	"io"
@@ -13,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -26,13 +28,13 @@ type ClientConfig struct {
 
 // sshAuth
 func sshConfig(username, password string) (*ssh.ClientConfig, error) {
-	id_rsa := filepath.Join(os.Getenv("HOME"), ".ssh", "id_rsa")
+	idRsa := filepath.Join(os.Getenv("HOME"), ".ssh", "id_rsa")
 	var methods []ssh.AuthMethod
 
 	if password != "" {
 		log.Infof("Auth through password")
 		methods = append(methods, ssh.Password(password))
-	} else if _, err := os.Stat(id_rsa); !os.IsNotExist(err) {
+	} else if _, err := os.Stat(idRsa); !os.IsNotExist(err) {
 		log.Infof("Auth through public key")
 		// var hostKey ssh.PublicKey
 		// A public key may be used to authenticate against the remote
@@ -40,7 +42,7 @@ func sshConfig(username, password string) (*ssh.ClientConfig, error) {
 		//
 		// If you have an encrypted private key, the crypto/x509 package
 		// can be used to decrypt it.
-		key, err := ioutil.ReadFile(id_rsa)
+		key, err := ioutil.ReadFile(idRsa)
 		if err != nil {
 			return nil, fmt.Errorf("unable to read private key: %v", err)
 		}
@@ -402,4 +404,101 @@ func (cliConf *ClientConfig) PushDownload(url, dstPath string) error {
 
 	srcPath.Body.Close()
 	return err
+}
+
+func initSftp(remote string, download, pull, scp bool, threads int) {
+	remoteHost, err := CreateProxy(host)
+	if err != nil {
+		log.Fatalf("wrong format of ssh server [%s]:  %s", host, err)
+	}
+	var files []*File
+	var wg sync.WaitGroup
+	// passed wg will be accounted at p.Wait() call
+	p := mpb.New(mpb.WithWaitGroup(&wg), mpb.WithRefreshRate(180*time.Millisecond))
+	taskChan := make(chan *Task)
+
+	client := &ClientConfig{Host: remoteHost}
+
+	if err := client.Connect(); err != nil {
+		log.Fatal(err)
+	}
+	defer client.Close()
+
+	// check whether target is exists
+	log.Infof("Create %s: %v", remote, client.Exists(remote))
+	if !client.Exists(remote) {
+		if err := client.Mkdir(remote); err != nil {
+			log.Fatal(err)
+		}
+	}
+
+	if download {
+		if err := client.PushDownload(path, remote); err != nil {
+			log.Fatal(err)
+		}
+	} else if pull {
+		fs, err := client.GetFiles(remote, pull)
+		if err != nil {
+			log.Fatal(err)
+		}
+		files = append(files, fs...)
+	} else {
+		fs, err := client.GetFiles(path, pull)
+		if err != nil {
+			log.Fatal(err)
+		}
+		files = append(files, fs...)
+	}
+
+	for i := 0; i < threads; i++ {
+		wg.Add(1)
+		// simulating some work
+		go func(pull, scp bool) {
+			defer wg.Done()
+
+			for {
+				task, ok := <-taskChan
+
+				if !ok {
+					break
+				}
+
+				client := &ClientConfig{Host: remoteHost}
+
+				if err := client.Connect(); err != nil {
+					log.Fatal(err)
+				}
+
+				if pull {
+					if err := client.Download(task.Source, task.Target, scp, fmt.Sprintf("[%d/%d]", task.ID, len(files))); err != nil {
+						log.Warn(err)
+					}
+				} else {
+					if err := client.Upload(task.Source, task.Target, scp, fmt.Sprintf("[%d/%d]", task.ID, len(files))); err != nil {
+						log.Warn(err)
+					}
+				}
+
+				err = client.Close()
+				if err != nil {
+					log.Warn(err)
+				}
+			}
+		}(pull, scp)
+	}
+
+	for idx, f := range files {
+		if pull {
+			taskChan <- &Task{f, filepath.Join(path, f.Path), idx + 1}
+		} else {
+			if f.Path == path {
+				taskChan <- &Task{f, filepath.Join(remote, f.Name()), idx + 1}
+			} else {
+				taskChan <- &Task{f, filepath.Join(remote, f.Path), idx + 1}
+			}
+		}
+	}
+
+	close(taskChan)
+	p.Wait()
 }

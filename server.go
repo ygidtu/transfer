@@ -13,65 +13,11 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/vbauerster/mpb/v7"
-	"github.com/vbauerster/mpb/v7/decor"
 )
-
-func listFiles() ([]*File, error) {
-	var files []*File
-
-	if stat, err := os.Stat(path); os.IsNotExist(err) {
-		return files, fmt.Errorf("%s not exists: %v", path, err)
-	} else if stat.IsDir() {
-		log.Infof("List files from %s", path)
-
-		if _, err := os.Stat(filepath.Join(path, jsonLog)); os.IsNotExist(err) {
-			var total int64
-			bar := p.AddBar(total,
-				mpb.PrependDecorators(decor.CountersNoUnit("%d / %d")),
-				mpb.AppendDecorators(decor.Percentage()),
-			)
-
-			if err := filepath.Walk(path, func(p string, info os.FileInfo, err error) error {
-				if info.Name() == jsonLog {
-					return nil
-				}
-				total += int64(1)
-				if !info.IsDir() {
-					p = strings.ReplaceAll(p, path, "")
-					p = strings.TrimLeft(p, "/")
-					files = append(files, &File{Path: p, Size: info.Size()})
-				}
-				bar.Increment()
-				bar.SetTotal(total, false)
-				return nil
-			}); err != nil {
-				return files, err
-			}
-			bar.SetTotal(total, true)
-			content, err := json.MarshalIndent(files, "", "  ")
-			if err != nil {
-				log.Warnf("failed to save json progress: %v", err)
-			}
-			_ = ioutil.WriteFile(filepath.Join(path, jsonLog), content, 0644)
-		} else {
-			log.Infof("Reload file info from: %s", filepath.Join(path, jsonLog))
-			content, err := ioutil.ReadFile(filepath.Join(path, jsonLog))
-			if err != nil {
-				return files, err
-			}
-			err = json.Unmarshal(content, &files)
-			if err != nil {
-				return files, err
-			}
-		}
-	} else {
-		files = append(files, &File{Path: path, Size: stat.Size()})
-	}
-
-	return files, nil
-}
 
 /*
 ##################################
@@ -353,4 +299,87 @@ func Post(file *File) error {
 	}
 
 	return nil
+}
+
+func initServer() {
+	log.Info("path: ", path)
+	log.Info("host: ", host)
+	log.Info("port: ", port)
+
+	http.HandleFunc("/list", ListFiles)
+	http.HandleFunc("/post", GetFiles)
+
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		if err := os.MkdirAll(path, os.ModePerm); err != nil {
+			log.Fatal(err)
+		}
+	}
+
+	fs := http.FileServer(http.Dir(path))
+	http.Handle("/", http.StripPrefix("/", fs))
+
+	log.Error(http.ListenAndServe(fmt.Sprintf("%v:%v", host, port), nil))
+}
+
+func initTransport(post bool, threads int) {
+	log.Info("path: ", path)
+	log.Info("host: ", host)
+	log.Info("port: ", port)
+
+	var files []*File
+	var wg sync.WaitGroup
+	// passed wg will be accounted at p.Wait() call
+	p := mpb.New(mpb.WithWaitGroup(&wg), mpb.WithRefreshRate(180*time.Millisecond))
+	taskChan := make(chan *Task)
+
+	if post {
+		target, err := listFiles()
+		if err != nil {
+			log.Fatal(err)
+		}
+		files = append(files, target...)
+	} else {
+		target, err := GetList()
+		if err != nil {
+			log.Fatal(err)
+		}
+		files = append(files, target...)
+	}
+
+	for i := 0; i < threads; i++ {
+		wg.Add(1)
+		// simulating some work
+		go func(post bool) {
+			defer wg.Done()
+			for {
+				file, ok := <-taskChan
+
+				if !ok {
+					break
+				}
+				if post {
+					log.Infof("[%d/%d] start to post: %v", file.ID, len(files), file.Source.Path)
+					if err := Post(file.Source); err != nil {
+						log.Warn(err)
+					}
+				} else {
+					log.Infof("[%d/%d] start to download: %v", file.ID, len(files), file.Source.Path)
+					if err := Get(file.Source); err != nil {
+						log.Warn(err)
+					}
+				}
+			}
+		}(post)
+	}
+
+	for idx, f := range files {
+		if f.Path == path {
+			taskChan <- &Task{f, f.Name(), idx + 1}
+		} else {
+			taskChan <- &Task{f, f.Path, idx + 1}
+		}
+	}
+
+	close(taskChan)
+	p.Wait()
 }
