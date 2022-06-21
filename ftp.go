@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"github.com/jlaffaye/ftp"
+	"github.com/schollz/progressbar/v3"
 	"io"
 	"os"
 	"path/filepath"
@@ -102,11 +103,10 @@ func process(task *Task, c *ftp.ServerConn, pull bool) {
 		}
 
 		bar := BytesBar(size, task.ID)
-		barReader := bar.ProxyReader(resp)
-		if _, err = io.Copy(w, barReader); err != nil {
+		if _, err = io.Copy(io.MultiWriter(w, bar), resp); err != nil {
 			log.Warnf("failed to get file from remote: %v", err)
 		}
-		_ = barReader.Close()
+		_ = bar.Finish()
 		_ = w.Close()
 	} else {
 		if f.Path != path {
@@ -148,12 +148,13 @@ func process(task *Task, c *ftp.ServerConn, pull bool) {
 			log.Infof("%s -> %s", f.Path, target)
 		}
 
-		barReader := bar.ProxyReader(r)
-		err = c.StorFrom(target, barReader, uint64(offset))
+		reader := progressbar.NewReader(r, bar)
+		err = c.StorFrom(target, &reader, uint64(offset))
 		if err != nil {
 			log.Warnf("failed to put file to remote: %v", err)
 		}
-		_ = barReader.Close()
+		_ = bar.Finish()
+		_ = reader.Close()
 		_ = r.Close()
 	}
 }

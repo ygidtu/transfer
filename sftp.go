@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/bramvdbogaerde/go-scp"
 	"github.com/pkg/sftp"
+	"github.com/schollz/progressbar/v3"
 	"golang.org/x/crypto/ssh"
 	px "golang.org/x/net/proxy"
 	"io"
@@ -250,17 +251,15 @@ func (cliConf *ClientConfig) Upload(task *Task, scp bool) error {
 	}
 
 	bar := BytesBar(srcPath.Size-seek, task.ID)
-
 	if _, err := srcFile.Seek(seek, 0); err != nil {
 		return err
 	}
 
-	barReader := bar.ProxyReader(srcFile)
-	defer barReader.Close()
-
 	// create proxy reader
-	_, err = io.Copy(dstFile, barReader)
-
+	reader := progressbar.NewReader(srcFile, bar)
+	_, err = io.Copy(dstFile, &reader)
+	_ = bar.Finish()
+	_ = reader.Close()
 	//cliConf.scpClient.CopyFile(context.Background(), barReader, dstPath, "0655")
 	return err
 }
@@ -316,12 +315,9 @@ func (cliConf *ClientConfig) Download(task *Task, scp bool) error {
 		return err
 	}
 
-	barReader := bar.ProxyReader(srcFile)
-	defer barReader.Close()
-
 	// create proxy reader
-	_, err = io.Copy(dstFile, barReader)
-
+	_, err = io.Copy(io.MultiWriter(dstFile, bar), srcFile)
+	_ = bar.Finish()
 	return err
 }
 
@@ -395,14 +391,10 @@ func (cliConf *ClientConfig) PushDownload(url, dstPath string) error {
 	}
 
 	bar := BytesBar(srcPath.Size, filepath.Base(url))
-
-	barReader := bar.ProxyReader(srcPath.Body)
-	defer barReader.Close()
-
 	// create proxy reader
-	_, err = io.Copy(dstFile, barReader)
-
-	srcPath.Body.Close()
+	_, err = io.Copy(io.MultiWriter(dstFile, bar), srcPath.Body)
+	_ = bar.Finish()
+	_ = srcPath.Body.Close()
 	return err
 }
 

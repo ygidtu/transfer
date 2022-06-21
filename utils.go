@@ -4,8 +4,6 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
-	"github.com/vbauerster/mpb/v7"
-	"github.com/vbauerster/mpb/v7/decor"
 	"io"
 	"io/ioutil"
 	"net/http"
@@ -13,7 +11,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"time"
+
+	"github.com/schollz/progressbar/v3"
 )
 
 // File is used to kept file path and size
@@ -28,37 +27,31 @@ func (file *File) Name() string {
 
 func listFiles() ([]*File, error) {
 	var files []*File
-	p := mpb.New(mpb.WithRefreshRate(180 * time.Millisecond))
+
 	if stat, err := os.Stat(path); os.IsNotExist(err) {
 		return files, fmt.Errorf("%s not exists: %v", path, err)
 	} else if stat.IsDir() {
 		log.Infof("List files from %s", path)
 
 		if _, err := os.Stat(filepath.Join(path, jsonLog)); os.IsNotExist(err) {
-			var total int64
-			bar := p.AddBar(total,
-				mpb.PrependDecorators(decor.CountersNoUnit("%d / %d")),
-				mpb.AppendDecorators(decor.Percentage()),
-			)
-
+			bar := progressbar.Default(-1, fmt.Sprintf("Searching files %s", path))
 			if err := filepath.Walk(path, func(p string, info os.FileInfo, err error) error {
 				if info.Name() == jsonLog {
 					return nil
 				}
-				total += int64(1)
+
 				if !info.IsDir() {
 					p = strings.ReplaceAll(p, path, "")
 					p = strings.TrimLeft(p, "/")
 					files = append(files, &File{Path: p, Size: info.Size()})
 				}
-				bar.Increment()
-				bar.SetTotal(total, false)
+				_ = bar.Add(1)
 				return nil
 			}); err != nil {
 				return files, err
 			}
-			bar.SetTotal(total, true)
 			content, err := json.MarshalIndent(files, "", "  ")
+			_ = bar.Finish()
 			if err != nil {
 				log.Warnf("failed to save json progress: %v", err)
 			}
@@ -103,24 +96,13 @@ type Task struct {
 }
 
 // BytesBar is used to generate progress bar
-func BytesBar(size int64, name string) *mpb.Bar {
+func BytesBar(size int64, name string) *progressbar.ProgressBar {
 
 	if len(name) > 50 {
 		name = fmt.Sprintf("%s...", name[0:51])
 	}
-	p := mpb.New(mpb.WithRefreshRate(180 * time.Millisecond))
 
-	return p.AddBar(size,
-		mpb.PrependDecorators(
-			decor.Name(name, decor.WC{W: len(name) + 1, C: decor.DidentRight}),
-			decor.CountersKibiByte("[% .2f / % .2f]"),
-		),
-		mpb.AppendDecorators(
-			decor.AverageETA(decor.ET_STYLE_GO),
-			decor.Name(" | "),
-			decor.AverageSpeed(decor.UnitKiB, "% .2f"),
-		),
-	)
+	return progressbar.DefaultBytes(size, name)
 }
 
 // Url is used to handle the url issues in transport and sftp download mode

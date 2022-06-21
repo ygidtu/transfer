@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"github.com/schollz/progressbar/v3"
 	"io"
 	"io/ioutil"
 	"net/http"
@@ -84,7 +85,6 @@ func GetFiles(w http.ResponseWriter, req *http.Request) {
 			_ = req.Body.Close()
 			_ = f.Close()
 			_, _ = io.WriteString(w, "Success")
-
 		}
 	case "GET":
 		{
@@ -102,6 +102,15 @@ func GetFiles(w http.ResponseWriter, req *http.Request) {
 			}
 		}
 	}
+}
+
+func Clean(w http.ResponseWriter, req *http.Request) {
+	err := clean()
+	if err != nil {
+		io.WriteString(w, fmt.Sprintf("%v", err))
+		return
+	}
+	_, _ = io.WriteString(w, "Success")
 }
 
 /*
@@ -177,7 +186,10 @@ func Get(task *Task) error {
 			_ = os.Remove(output)
 		} else {
 			log.Infof("Resume from %s", ByteCountDecimal(stat.Size()))
-			_ = req.seek(stat.Size())
+			err = req.seek(stat.Size())
+			if err != nil {
+				log.Error(err)
+			}
 		}
 	}
 
@@ -189,18 +201,19 @@ func Get(task *Task) error {
 	w := bufio.NewWriter(f)
 
 	bar := BytesBar(req.Size, task.ID)
-	barReader := bar.ProxyReader(req.Body)
-
-	_, err = io.Copy(w, barReader)
+	_, err = io.Copy(io.MultiWriter(w, bar), req.Body)
 	if err != nil {
 		return fmt.Errorf("failed to copy %s: %v", output, err)
 	}
-	_ = barReader.Close()
+
+	_ = bar.Finish()
+	_ = w.Flush()
+	_ = f.Close()
+
 	if stat, err := os.Stat(output); !os.IsNotExist(err) {
 		if stat.Size() != file.Size {
 			log.Infof("download incomplete: %v != %v", stat.Size(), file.Size)
 			if stat.Size() < file.Size {
-				_ = f.Close()
 				return Get(task)
 			} else if stat.Size() > file.Size {
 				_ = os.Remove(output)
@@ -209,8 +222,6 @@ func Get(task *Task) error {
 		}
 	}
 
-	_ = f.Close()
-	_ = req.Body.Close()
 	return nil
 }
 
@@ -270,7 +281,6 @@ func Post(task *Task) error {
 	} else if start > 0 {
 		log.Infof("Resume from: %s", ByteCountDecimal(start))
 	}
-	log.Debug(u)
 
 	// save to file
 	f, err := os.Open(file.Path)
@@ -280,15 +290,14 @@ func Post(task *Task) error {
 	_, _ = f.Seek(start, 0)
 
 	bar := BytesBar(total-start, task.ID)
-
-	barReader := bar.ProxyReader(f)
-	resp, err := http.Post(u, "", barReader)
-
+	reader := progressbar.NewReader(f, bar)
+	resp, err := http.Post(u, "", &reader)
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		return fmt.Errorf("%s: %v", string(body), err)
 	}
-	_ = barReader.Close()
+	_ = reader.Close()
+	_ = bar.Finish()
 	_ = resp.Body.Close()
 	_ = f.Close()
 	return nil
@@ -309,6 +318,7 @@ func initServer() {
 
 	fs := http.FileServer(http.Dir(path))
 	http.Handle("/", http.StripPrefix("/", fs))
+	http.HandleFunc("/delete", Clean)
 
 	log.Error(http.ListenAndServe(host, nil))
 }

@@ -21,13 +21,13 @@ type options struct {
 		Path  string `goptions:"-i, --path, description='the path to save files'"`
 		Host  string `goptions:"-u, --host, description='the target host [ip:port]'"`
 		Proxy string `goptions:"-x, --proxy, description='the proxy to use [http or socks5]'"`
-		Post  bool   `goptions:"-s, --post, description='the proxy to use [http or socks5]'"`
+		Post  bool   `goptions:"-p, --post, description='the proxy to use [http or socks5]'"`
 	} `goptions:"trans"`
 	Sftp struct {
 		Path     string `goptions:"-l, --local, description='the local path or url'"`
 		Host     string `goptions:"-u, --host, obligatory,description='the remote server [user:passwd@host:port]]'"`
 		Remote   string `goptions:"-r, --remote, obligatory,description='remote path in server'"`
-		Pull     bool   `goptions:"--pull, description='pull files from server'"`
+		Pull     bool   `goptions:"-p, --pull, description='pull files from server'"`
 		Proxy    string `goptions:"-x, --proxy, description='the proxy to use [socks5 or ssh://user:passwd@host:port]'"`
 		Scp      bool   `goptions:"-s, --scp, description='transfer throught scp instead of sftp'"`
 		Download bool   `goptions:"--download, description='download file and save to server'"`

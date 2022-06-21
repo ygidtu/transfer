@@ -1,9 +1,12 @@
 package main
 
 import (
+	"fmt"
 	"github.com/voxelbrain/goptions"
 	"go.uber.org/zap"
+	"net/http"
 	"os"
+	"path/filepath"
 )
 
 var (
@@ -14,6 +17,13 @@ var (
 	sftpProxy *Proxy
 	jsonLog   string
 )
+
+func clean() error {
+	if _, ok := os.Stat(filepath.Join(path, jsonLog)); !os.IsNotExist(ok) {
+		return os.Remove(filepath.Join(path, jsonLog))
+	}
+	return nil
+}
 
 func main() {
 	var options = options{}
@@ -39,10 +49,12 @@ func main() {
 	}
 
 	if options.Remove {
-		if _, ok := os.Stat(jsonLog); !os.IsNotExist(ok) {
-			if err := os.Remove(jsonLog); err != nil {
-				log.Warnf("failed to remove %s: %v", jsonLog, err)
-			}
+		if err := clean(); err != nil {
+			log.Error(err)
+		}
+
+		if options.Verbs == "trans" {
+			_, _ = http.Get(fmt.Sprintf("%s/delete", host))
 		}
 	}
 }
