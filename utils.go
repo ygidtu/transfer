@@ -99,16 +99,16 @@ func ByteCountDecimal(b int64) string {
 type Task struct {
 	Source *File
 	Target string
-	ID     int
+	ID     string
 }
 
 // BytesBar is used to generate progress bar
-func BytesBar(size int64, name string, p *mpb.Progress) *mpb.Bar {
+func BytesBar(size int64, name string) *mpb.Bar {
 
 	if len(name) > 50 {
 		name = fmt.Sprintf("%s...", name[0:51])
 	}
-	//p := mpb.New(mpb.WithRefreshRate(180 * time.Millisecond))
+	p := mpb.New(mpb.WithRefreshRate(180 * time.Millisecond))
 
 	return p.AddBar(size,
 		mpb.PrependDecorators(

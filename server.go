@@ -13,10 +13,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync"
-	"time"
-
-	"github.com/vbauerster/mpb/v7"
 )
 
 /*
@@ -116,7 +112,7 @@ Get
 
 // GetList used by get function to get all files to download
 func GetList() ([]*File, error) {
-	log.Infof("Get files: %v:%v", host, port)
+	log.Infof("Get files: %s", host)
 
 	var target []*File
 	client := &http.Client{}
@@ -128,7 +124,7 @@ func GetList() ([]*File, error) {
 		}
 	}
 
-	resp, err := client.Get(fmt.Sprintf("%v:%v/list", host, port))
+	resp, err := client.Get(fmt.Sprintf("%s/list", host))
 	if err != nil {
 		return target, fmt.Errorf("failed to get list of files: %v", err)
 	}
@@ -147,10 +143,10 @@ func GetList() ([]*File, error) {
 }
 
 // Get is function that download links
-func Get(file *File, p *mpb.Progress) error {
+func Get(task *Task) error {
+	file := task.Source
 	output := filepath.Join(path, file.Path)
-	u := fmt.Sprintf("%v:%v/%v", host, port, url.PathEscape(file.Path))
-	log.Info("start to download: ", file.Path)
+	u := fmt.Sprintf("%s/%v", host, url.PathEscape(file.Path))
 	if u == "" {
 		return fmt.Errorf("empty url")
 	}
@@ -174,7 +170,7 @@ func Get(file *File, p *mpb.Progress) error {
 
 	if stat, err := os.Stat(output); !os.IsNotExist(err) {
 		if stat.Size() == file.Size {
-			log.Info("download complete")
+			log.Infof("%s: skip", task.ID)
 			return req.Body.Close()
 		} else if stat.Size() > file.Size {
 			log.Warnf("%v size [%v] > remote [%v], redownload", output, stat.Size(), file.Size)
@@ -192,7 +188,7 @@ func Get(file *File, p *mpb.Progress) error {
 	}
 	w := bufio.NewWriter(f)
 
-	bar := BytesBar(req.Size, filepath.Base(output), p)
+	bar := BytesBar(req.Size, task.ID)
 	barReader := bar.ProxyReader(req.Body)
 
 	_, err = io.Copy(w, barReader)
@@ -205,10 +201,10 @@ func Get(file *File, p *mpb.Progress) error {
 			log.Infof("download incomplete: %v != %v", stat.Size(), file.Size)
 			if stat.Size() < file.Size {
 				_ = f.Close()
-				return Get(file, p)
+				return Get(task)
 			} else if stat.Size() > file.Size {
 				_ = os.Remove(output)
-				return Get(file, p)
+				return Get(task)
 			}
 		}
 	}
@@ -225,14 +221,14 @@ Post
 */
 
 // Post is function that post file to server
-func Post(file *File, p *mpb.Progress) error {
+func Post(task *Task) error {
+	file := task.Source
 	input := strings.ReplaceAll(file.Path, path, "")
 	if input == "" {
 		input = filepath.Base(file.Path)
 	}
-	u := fmt.Sprintf("%v:%v/post?path=%v", host, port, url.PathEscape(input))
+	u := fmt.Sprintf("%v/post?path=%v", host, url.PathEscape(input))
 
-	//log.Info("start to post: ", input)
 	if u == "" {
 		return fmt.Errorf("empty url")
 	}
@@ -283,7 +279,7 @@ func Post(file *File, p *mpb.Progress) error {
 	}
 	_, _ = f.Seek(start, 0)
 
-	bar := BytesBar(total-start, filepath.Base(input), p)
+	bar := BytesBar(total-start, task.ID)
 
 	barReader := bar.ProxyReader(f)
 	resp, err := http.Post(u, "", barReader)
@@ -301,7 +297,6 @@ func Post(file *File, p *mpb.Progress) error {
 func initServer() {
 	log.Info("path: ", path)
 	log.Info("host: ", host)
-	log.Info("port: ", port)
 
 	http.HandleFunc("/list", ListFiles)
 	http.HandleFunc("/post", GetFiles)
@@ -315,20 +310,14 @@ func initServer() {
 	fs := http.FileServer(http.Dir(path))
 	http.Handle("/", http.StripPrefix("/", fs))
 
-	log.Error(http.ListenAndServe(fmt.Sprintf("%v:%v", host, port), nil))
+	log.Error(http.ListenAndServe(host, nil))
 }
 
-func initTransport(post bool, threads int) {
+func initTransport(post bool) {
 	log.Info("path: ", path)
 	log.Info("host: ", host)
-	log.Info("port: ", port)
 
 	var files []*File
-	var wg sync.WaitGroup
-	// passed wg will be accounted at p.Wait() call
-	p := mpb.New(mpb.WithWaitGroup(&wg), mpb.WithRefreshRate(180*time.Millisecond))
-	taskChan := make(chan *Task)
-
 	if post {
 		target, err := listFiles()
 		if err != nil {
@@ -343,40 +332,20 @@ func initTransport(post bool, threads int) {
 		files = append(files, target...)
 	}
 
-	for i := 0; i < threads; i++ {
-		wg.Add(1)
-		// simulating some work
-		go func(post bool, p *mpb.Progress) {
-			defer wg.Done()
-			for {
-				file, ok := <-taskChan
-
-				if !ok {
-					break
-				}
-				if post {
-					log.Infof("[%d/%d] start to post: %v", file.ID, len(files), file.Source.Path)
-					if err := Post(file.Source, p); err != nil {
-						log.Warn(err)
-					}
-				} else {
-					log.Infof("[%d/%d] start to download: %v", file.ID, len(files), file.Source.Path)
-					if err := Get(file.Source, p); err != nil {
-						log.Warn(err)
-					}
-				}
-			}
-		}(post, p)
-	}
-
 	for idx, f := range files {
+		file := &Task{f, f.Path, fmt.Sprintf("[%d/%d] %s", idx+1, len(files), filepath.Base(f.Path))}
 		if f.Path == path {
-			taskChan <- &Task{f, f.Name(), idx + 1}
+			file = &Task{f, f.Name(), fmt.Sprintf("[%d/%d] %s", idx+1, len(files), filepath.Base(f.Path))}
+		}
+
+		if post {
+			if err := Post(file); err != nil {
+				log.Warn(err)
+			}
 		} else {
-			taskChan <- &Task{f, f.Path, idx + 1}
+			if err := Get(file); err != nil {
+				log.Warn(err)
+			}
 		}
 	}
-
-	close(taskChan)
-	p.Wait()
 }

@@ -9,48 +9,48 @@ import (
 
 // command line parameters
 type options struct {
-	Help goptions.Help `goptions:"-h, --help, description='Show this help'"`
+	Help   goptions.Help `goptions:"-h, --help, description='Show this help'"`
+	Remove bool          `goptions:"-r, --rm, description='Remove'"`
 
 	goptions.Verbs
 	Server struct {
 		Path string `goptions:"-i, --path, description='the path contains files'"`
-		Host string `goptions:"-h, --host, description='the ip address to listen'"`
-		Port int    `goptions:"-p, --port, description='the port to listen'"`
+		Host string `goptions:"-u, --host, description='the ip address to listen [ip:port]'"`
 	} `goptions:"server"`
 	Trans struct {
-		Path    string `goptions:"-i, --path, description='the path to save files'"`
-		Host    string `goptions:"-h, --host, description='the target host ip'"`
-		Port    int    `goptions:"-p, --port, description='the target port'"`
-		Proxy   string `goptions:"-x, --proxy, description='the proxy to use [http or socks5]'"`
-		Post    bool   `goptions:"-s, --post, description='the proxy to use [http or socks5]'"`
-		Threads int    `goptions:"-t, --threads, description='the threads to use'"`
+		Path  string `goptions:"-i, --path, description='the path to save files'"`
+		Host  string `goptions:"-u, --host, description='the target host [ip:port]'"`
+		Proxy string `goptions:"-x, --proxy, description='the proxy to use [http or socks5]'"`
+		Post  bool   `goptions:"-s, --post, description='the proxy to use [http or socks5]'"`
 	} `goptions:"trans"`
 	Sftp struct {
 		Path     string `goptions:"-l, --local, description='the local path or url'"`
-		Host     string `goptions:"-h, --host, obligatory,description='the remote server [user:passwd@host:port]]'"`
+		Host     string `goptions:"-u, --host, obligatory,description='the remote server [user:passwd@host:port]]'"`
 		Remote   string `goptions:"-r, --remote, obligatory,description='remote path in server'"`
 		Pull     bool   `goptions:"--pull, description='pull files from server'"`
 		Proxy    string `goptions:"-x, --proxy, description='the proxy to use [socks5 or ssh://user:passwd@host:port]'"`
 		Scp      bool   `goptions:"-s, --scp, description='transfer throught scp instead of sftp'"`
 		Download bool   `goptions:"--download, description='download file and save to server'"`
 		ProxyD   string `goptions:"--download-proxy, description='the proxy used to download file [socks5 or http]'"`
-		Threads  int    `goptions:"-t, --threads, description='the threads to use'"`
 	} `goptions:"sftp"`
 	Ftp struct {
-		Path    string `goptions:"-l, --local, description='the local path or url'"`
-		Host    string `goptions:"-h, --host, obligatory,description='the remote server [user:passwd@host:port]]'"`
-		Remote  string `goptions:"-r, --remote, obligatory,description='remote path in server'"`
-		Pull    bool   `goptions:"--pull, description='pull files from server'"`
-		Threads int    `goptions:"-t, --threads, description='the threads to use'"`
+		Path   string `goptions:"-l, --local, description='the local path or url'"`
+		Host   string `goptions:"-u, --host, obligatory,description='the remote server [user:passwd@host:port]]'"`
+		Remote string `goptions:"-r, --remote, obligatory,description='remote path in server'"`
+		Pull   bool   `goptions:"--pull, description='pull files from server'"`
 	} `goptions:"ftp"`
 }
 
 // process and set send options
 func defaultSend(opt *options) {
 	if opt.Server.Host == "" {
-		host = "0.0.0.0"
+		host = "0.0.0.0:8000"
 	} else {
 		host = opt.Server.Host
+
+		if !strings.Contains(opt.Server.Host, ":") {
+			host = fmt.Sprintf("%s:8000", host)
+		}
 	}
 
 	if opt.Server.Path == "" {
@@ -62,24 +62,21 @@ func defaultSend(opt *options) {
 			path = abs
 		}
 	}
-
-	if opt.Server.Port == 0 {
-		port = 8000
-	} else {
-		port = opt.Server.Port
-	}
 }
 
 // process and set get options
 func defaultGet(opt *options) {
 	if opt.Trans.Host == "" {
-		host = "127.0.0.1"
+		host = "127.0.0.1:8000"
 	} else {
 		host = opt.Trans.Host
-	}
 
+		if !strings.Contains(opt.Trans.Host, ":") {
+			host = fmt.Sprintf("%s:8000", host)
+		}
+	}
 	if !strings.HasPrefix(host, "http") {
-		host = fmt.Sprintf("http://%v", host)
+		host = fmt.Sprintf("http://%s", host)
 	}
 
 	if opt.Trans.Path == "" {
@@ -90,16 +87,6 @@ func defaultGet(opt *options) {
 		} else {
 			path = abs
 		}
-	}
-
-	if opt.Trans.Port == 0 {
-		port = 8000
-	} else {
-		port = opt.Trans.Port
-	}
-
-	if opt.Trans.Threads == 0 {
-		opt.Trans.Threads = 1
 	}
 
 	if opt.Trans.Proxy != "" {
@@ -162,10 +149,6 @@ func defaultSftp(opt *options) {
 			log.Fatalf("the download proxy do not support this kind of proxy: %s", p.Scheme)
 		}
 	}
-
-	if opt.Sftp.Threads == 0 {
-		opt.Sftp.Threads = 1
-	}
 }
 
 func defaultFtp(opt *options) {
@@ -182,8 +165,4 @@ func defaultFtp(opt *options) {
 	}
 
 	log.Info(path)
-
-	if opt.Ftp.Threads == 0 {
-		opt.Ftp.Threads = 1
-	}
 }

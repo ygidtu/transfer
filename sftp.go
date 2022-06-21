@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"github.com/bramvdbogaerde/go-scp"
 	"github.com/pkg/sftp"
-	"github.com/vbauerster/mpb/v7"
 	"golang.org/x/crypto/ssh"
 	px "golang.org/x/net/proxy"
 	"io"
@@ -14,7 +13,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -24,7 +22,6 @@ type ClientConfig struct {
 	sshClient  *ssh.Client  //ssh client
 	sftpClient *sftp.Client //sftp client
 	scpClient  *scp.Client
-	progress   *mpb.Progress
 }
 
 // sshAuth
@@ -208,7 +205,8 @@ func (cliConf *ClientConfig) MkParent(path string, upload bool) error {
 }
 
 // Upload create or resume upload file
-func (cliConf *ClientConfig) Upload(srcPath *File, dstPath string, scp bool, prefix string) error {
+func (cliConf *ClientConfig) Upload(task *Task, scp bool) error {
+	srcPath, dstPath := task.Source, task.Target
 	err := cliConf.MkParent(dstPath, true)
 	if err != nil {
 		return fmt.Errorf("failed to create parent directory for %s: %v", dstPath, err)
@@ -251,7 +249,7 @@ func (cliConf *ClientConfig) Upload(srcPath *File, dstPath string, scp bool, pre
 		}
 	}
 
-	bar := BytesBar(srcPath.Size-seek, fmt.Sprintf("%s %s", prefix, filepath.Base(srcFile.Name())), cliConf.progress)
+	bar := BytesBar(srcPath.Size-seek, task.ID)
 
 	if _, err := srcFile.Seek(seek, 0); err != nil {
 		return err
@@ -268,7 +266,8 @@ func (cliConf *ClientConfig) Upload(srcPath *File, dstPath string, scp bool, pre
 }
 
 // Download pull file from server
-func (cliConf *ClientConfig) Download(srcPath *File, dstPath string, scp bool, prefix string) error {
+func (cliConf *ClientConfig) Download(task *Task, scp bool) error {
+	srcPath, dstPath := task.Source, task.Target
 	err := cliConf.MkParent(dstPath, false)
 	if err != nil {
 		return err
@@ -311,7 +310,7 @@ func (cliConf *ClientConfig) Download(srcPath *File, dstPath string, scp bool, p
 		}
 	}
 
-	bar := BytesBar(srcPath.Size-seek, fmt.Sprintf("%s %s", prefix, filepath.Base(srcFile.Name())), cliConf.progress)
+	bar := BytesBar(srcPath.Size-seek, task.ID)
 
 	if _, err := srcFile.Seek(seek, 0); err != nil {
 		return err
@@ -395,7 +394,7 @@ func (cliConf *ClientConfig) PushDownload(url, dstPath string) error {
 		}
 	}
 
-	bar := BytesBar(srcPath.Size, filepath.Base(url), cliConf.progress)
+	bar := BytesBar(srcPath.Size, filepath.Base(url))
 
 	barReader := bar.ProxyReader(srcPath.Body)
 	defer barReader.Close()
@@ -407,23 +406,17 @@ func (cliConf *ClientConfig) PushDownload(url, dstPath string) error {
 	return err
 }
 
-func initSftp(remote string, download, pull, scp bool, threads int) {
+func initSftp(remote string, download, pull, scp bool) {
 	remoteHost, err := CreateProxy(host)
 	if err != nil {
 		log.Fatalf("wrong format of ssh server [%s]:  %s", host, err)
 	}
 	var files []*File
-	var wg sync.WaitGroup
-	// passed wg will be accounted at p.Wait() call
-	p := mpb.New(mpb.WithWaitGroup(&wg), mpb.WithRefreshRate(180*time.Millisecond))
-	taskChan := make(chan *Task)
-
-	client := &ClientConfig{Host: remoteHost, progress: p}
+	client := &ClientConfig{Host: remoteHost}
 
 	if err := client.Connect(); err != nil {
 		log.Fatal(err)
 	}
-	defer client.Close()
 
 	// check whether target is exists
 	log.Infof("Create %s: %v", remote, client.Exists(remote))
@@ -451,55 +444,32 @@ func initSftp(remote string, download, pull, scp bool, threads int) {
 		files = append(files, fs...)
 	}
 
-	for i := 0; i < threads; i++ {
-		wg.Add(1)
-		// simulating some work
-		go func(pull, scp bool) {
-			defer wg.Done()
-
-			for {
-				task, ok := <-taskChan
-
-				if !ok {
-					break
-				}
-
-				client := &ClientConfig{Host: remoteHost}
-
-				if err := client.Connect(); err != nil {
-					log.Fatal(err)
-				}
-
-				if pull {
-					if err := client.Download(task.Source, task.Target, scp, fmt.Sprintf("[%d/%d]", task.ID, len(files))); err != nil {
-						log.Warn(err)
-					}
-				} else {
-					if err := client.Upload(task.Source, task.Target, scp, fmt.Sprintf("[%d/%d]", task.ID, len(files))); err != nil {
-						log.Warn(err)
-					}
-				}
-
-				err = client.Close()
-				if err != nil {
-					log.Warn(err)
-				}
-			}
-		}(pull, scp)
-	}
-
 	for idx, f := range files {
 		if pull {
-			taskChan <- &Task{f, filepath.Join(path, f.Path), idx + 1}
+			task := &Task{
+				f,
+				filepath.Join(path, f.Path),
+				fmt.Sprintf("[%d/%d]%s", idx+1, len(files), f.Name())}
+			if err := client.Download(task, scp); err != nil {
+				log.Warn(err)
+			}
 		} else {
+			task := &Task{
+				f,
+				filepath.Join(remote, f.Path),
+				fmt.Sprintf("[%d/%d]%s", idx+1, len(files), f.Name())}
 			if f.Path == path {
-				taskChan <- &Task{f, filepath.Join(remote, f.Name()), idx + 1}
-			} else {
-				taskChan <- &Task{f, filepath.Join(remote, f.Path), idx + 1}
+				task = &Task{f, filepath.Join(remote, f.Name()),
+					fmt.Sprintf("[%d/%d]%s", idx+1, len(files), f.Name())}
+			}
+			if err := client.Upload(task, scp); err != nil {
+				log.Warn(err)
 			}
 		}
 	}
 
-	close(taskChan)
-	p.Wait()
+	err = client.Close()
+	if err != nil {
+		log.Warn(err)
+	}
 }
