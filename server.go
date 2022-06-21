@@ -144,7 +144,7 @@ func GetList() ([]*File, error) {
 }
 
 // Get is function that download links
-func Get(file *File) error {
+func Get(file *File, p *mpb.Progress) error {
 	output := filepath.Join(path, file.Path)
 	u := fmt.Sprintf("%v:%v/%v", host, port, url.PathEscape(file.Path))
 	log.Info("start to download: ", file.Path)
@@ -192,25 +192,24 @@ func Get(file *File) error {
 	w := bufio.NewWriter(f)
 	defer w.Flush()
 
-	bar := BytesBar(req.Size, filepath.Base(output))
+	bar := BytesBar(req.Size, filepath.Base(output), p)
 
 	barReader := bar.ProxyReader(req.Body)
-	defer barReader.Close()
 
 	_, err = io.Copy(w, barReader)
 	if err != nil {
 		return fmt.Errorf("failed to copy %s: %v", output, err)
 	}
-
+	_ = barReader.Close()
 	if stat, err := os.Stat(output); !os.IsNotExist(err) {
 		if stat.Size() != file.Size {
 			log.Infof("download incomplete: %v != %v", stat.Size(), file.Size)
 			if stat.Size() < file.Size {
 				f.Close()
-				return Get(file)
+				return Get(file, p)
 			} else if stat.Size() > file.Size {
 				os.Remove(output)
-				return Get(file)
+				return Get(file, p)
 			}
 		}
 	}
@@ -225,7 +224,7 @@ Post
 */
 
 // Post is function that post file to server
-func Post(file *File) error {
+func Post(file *File, p *mpb.Progress) error {
 	input := strings.ReplaceAll(file.Path, path, "")
 	if input == "" {
 		input = filepath.Base(file.Path)
@@ -285,7 +284,7 @@ func Post(file *File) error {
 
 	_, _ = f.Seek(start, 0)
 
-	bar := BytesBar(total-start, filepath.Base(input))
+	bar := BytesBar(total-start, filepath.Base(input), p)
 
 	barReader := bar.ProxyReader(f)
 	defer barReader.Close()
@@ -349,7 +348,7 @@ func initTransport(post bool, threads int) {
 	for i := 0; i < threads; i++ {
 		wg.Add(1)
 		// simulating some work
-		go func(post bool) {
+		go func(post bool, p *mpb.Progress) {
 			defer wg.Done()
 			for {
 				file, ok := <-taskChan
@@ -359,17 +358,17 @@ func initTransport(post bool, threads int) {
 				}
 				if post {
 					log.Infof("[%d/%d] start to post: %v", file.ID, len(files), file.Source.Path)
-					if err := Post(file.Source); err != nil {
+					if err := Post(file.Source, p); err != nil {
 						log.Warn(err)
 					}
 				} else {
 					log.Infof("[%d/%d] start to download: %v", file.ID, len(files), file.Source.Path)
-					if err := Get(file.Source); err != nil {
+					if err := Get(file.Source, p); err != nil {
 						log.Warn(err)
 					}
 				}
 			}
-		}(post)
+		}(post, p)
 	}
 
 	for idx, f := range files {

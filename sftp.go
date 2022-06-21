@@ -24,6 +24,7 @@ type ClientConfig struct {
 	sshClient  *ssh.Client  //ssh client
 	sftpClient *sftp.Client //sftp client
 	scpClient  *scp.Client
+	progress   *mpb.Progress
 }
 
 // sshAuth
@@ -250,7 +251,7 @@ func (cliConf *ClientConfig) Upload(srcPath *File, dstPath string, scp bool, pre
 		}
 	}
 
-	bar := BytesBar(srcPath.Size-seek, fmt.Sprintf("%s %s", prefix, filepath.Base(srcFile.Name())))
+	bar := BytesBar(srcPath.Size-seek, fmt.Sprintf("%s %s", prefix, filepath.Base(srcFile.Name())), cliConf.progress)
 
 	if _, err := srcFile.Seek(seek, 0); err != nil {
 		return err
@@ -310,7 +311,7 @@ func (cliConf *ClientConfig) Download(srcPath *File, dstPath string, scp bool, p
 		}
 	}
 
-	bar := BytesBar(srcPath.Size-seek, fmt.Sprintf("%s %s", prefix, filepath.Base(srcFile.Name())))
+	bar := BytesBar(srcPath.Size-seek, fmt.Sprintf("%s %s", prefix, filepath.Base(srcFile.Name())), cliConf.progress)
 
 	if _, err := srcFile.Seek(seek, 0); err != nil {
 		return err
@@ -394,7 +395,7 @@ func (cliConf *ClientConfig) PushDownload(url, dstPath string) error {
 		}
 	}
 
-	bar := BytesBar(srcPath.Size, filepath.Base(url))
+	bar := BytesBar(srcPath.Size, filepath.Base(url), cliConf.progress)
 
 	barReader := bar.ProxyReader(srcPath.Body)
 	defer barReader.Close()
@@ -417,7 +418,7 @@ func initSftp(remote string, download, pull, scp bool, threads int) {
 	p := mpb.New(mpb.WithWaitGroup(&wg), mpb.WithRefreshRate(180*time.Millisecond))
 	taskChan := make(chan *Task)
 
-	client := &ClientConfig{Host: remoteHost}
+	client := &ClientConfig{Host: remoteHost, progress: p}
 
 	if err := client.Connect(); err != nil {
 		log.Fatal(err)

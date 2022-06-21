@@ -86,7 +86,7 @@ func initFtp(host, remote string, pull bool, threads int) {
 	for i := 0; i < threads; i++ {
 		wg.Add(1)
 		// simulating some work
-		go func(pull bool) {
+		go func(pull bool, p *mpb.Progress) {
 			defer wg.Done()
 			for {
 				file, ok := <-taskChan
@@ -167,7 +167,7 @@ func initFtp(host, remote string, pull bool, threads int) {
 						}
 					}
 
-					bar := BytesBar(f.Size, filepath.Base(f.Path))
+					bar := BytesBar(f.Size, filepath.Base(f.Path), p)
 					r, err := os.Open(f.Path)
 					if err != nil {
 						log.Warnf("failed to open local file %s: %v", f.Path, err)
@@ -194,7 +194,7 @@ func initFtp(host, remote string, pull bool, threads int) {
 					}
 				}
 			}
-		}(pull)
+		}(pull, p)
 	}
 
 	if pull {

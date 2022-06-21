@@ -103,12 +103,13 @@ type Task struct {
 }
 
 // BytesBar is used to generate progress bar
-func BytesBar(size int64, name string) *mpb.Bar {
+func BytesBar(size int64, name string, p *mpb.Progress) *mpb.Bar {
 
 	if len(name) > 50 {
 		name = fmt.Sprintf("%s...", name[0:51])
 	}
-	p := mpb.New(mpb.WithRefreshRate(180 * time.Millisecond))
+	//p := mpb.New(mpb.WithRefreshRate(180 * time.Millisecond))
+
 	return p.AddBar(size,
 		mpb.PrependDecorators(
 			decor.Name(name, decor.WC{W: len(name) + 1, C: decor.DidentRight}),
