@@ -35,7 +35,7 @@ func ListFiles(w http.ResponseWriter, _ *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(files)
+	_ = json.NewEncoder(w).Encode(files)
 }
 
 // GetFiles as name says get posted file and save it
@@ -44,7 +44,6 @@ func GetFiles(w http.ResponseWriter, req *http.Request) {
 	switch req.Method {
 	case "POST":
 		{
-			defer req.Body.Close()
 			var opath string
 			mode := "a"
 			for k, v := range req.URL.Query() {
@@ -78,7 +77,6 @@ func GetFiles(w http.ResponseWriter, req *http.Request) {
 				_, _ = io.WriteString(w, e)
 				return
 			}
-			defer f.Close()
 
 			_, err = io.Copy(f, req.Body)
 			if err != nil {
@@ -87,8 +85,10 @@ func GetFiles(w http.ResponseWriter, req *http.Request) {
 				_, _ = io.WriteString(w, e)
 				return
 			}
-
+			_ = req.Body.Close()
+			_ = f.Close()
 			_, _ = io.WriteString(w, "Success")
+
 		}
 	case "GET":
 		{
@@ -137,7 +137,10 @@ func GetList() ([]*File, error) {
 	if err != nil {
 		return target, fmt.Errorf("failed to read  response from list: %v", err)
 	}
-	defer resp.Body.Close()
+	err = resp.Body.Close()
+	if err != nil {
+		return target, err
+	}
 
 	err = json.Unmarshal(body, &target)
 	return target, err
@@ -172,28 +175,24 @@ func Get(file *File, p *mpb.Progress) error {
 	if stat, err := os.Stat(output); !os.IsNotExist(err) {
 		if stat.Size() == file.Size {
 			log.Info("download complete")
-			return nil
+			return req.Body.Close()
 		} else if stat.Size() > file.Size {
 			log.Warnf("%v size [%v] > remote [%v], redownload", output, stat.Size(), file.Size)
-			os.Remove(output)
+			_ = os.Remove(output)
 		} else {
 			log.Infof("Resume from %s", ByteCountDecimal(stat.Size()))
-			req.seek(stat.Size())
+			_ = req.seek(stat.Size())
 		}
 	}
-	defer req.Body.Close()
 
 	// save to file
 	f, err := os.OpenFile(output, os.O_APPEND|os.O_CREATE|os.O_WRONLY, os.ModePerm)
 	if err != nil {
 		return fmt.Errorf("failed to open %s: %v", output, err)
 	}
-	defer f.Close()
 	w := bufio.NewWriter(f)
-	defer w.Flush()
 
 	bar := BytesBar(req.Size, filepath.Base(output), p)
-
 	barReader := bar.ProxyReader(req.Body)
 
 	_, err = io.Copy(w, barReader)
@@ -205,15 +204,17 @@ func Get(file *File, p *mpb.Progress) error {
 		if stat.Size() != file.Size {
 			log.Infof("download incomplete: %v != %v", stat.Size(), file.Size)
 			if stat.Size() < file.Size {
-				f.Close()
+				_ = f.Close()
 				return Get(file, p)
 			} else if stat.Size() > file.Size {
-				os.Remove(output)
+				_ = os.Remove(output)
 				return Get(file, p)
 			}
 		}
 	}
 
+	_ = f.Close()
+	_ = req.Body.Close()
 	return nil
 }
 
@@ -280,23 +281,20 @@ func Post(file *File, p *mpb.Progress) error {
 	if err != nil {
 		return fmt.Errorf("failed to open %s: %v", input, err)
 	}
-	defer f.Close()
-
 	_, _ = f.Seek(start, 0)
 
 	bar := BytesBar(total-start, filepath.Base(input), p)
 
 	barReader := bar.ProxyReader(f)
-	defer barReader.Close()
-
 	resp, err := http.Post(u, "", barReader)
 
-	defer resp.Body.Close()
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		return fmt.Errorf("%s: %v", string(body), err)
 	}
-
+	_ = barReader.Close()
+	_ = resp.Body.Close()
+	_ = f.Close()
 	return nil
 }
 
