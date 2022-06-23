@@ -29,6 +29,11 @@ func main() {
 	var options = options{}
 	goptions.ParseAndFail(&options)
 
+	if options.Version {
+		log.Info("Current version: v0.0.2")
+		os.Exit(0)
+	}
+
 	jsonLog = "transfer_json_filelist.json"
 
 	if options.Verbs == "server" {

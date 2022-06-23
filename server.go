@@ -30,6 +30,12 @@ func ListFiles(w http.ResponseWriter, _ *http.Request) {
 		log.Error(err)
 	}
 
+	for _, f := range files {
+		if f.Path == path {
+			f.Path = filepath.Base(f.Path)
+		}
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(files)
@@ -107,7 +113,7 @@ func GetFiles(w http.ResponseWriter, req *http.Request) {
 func Clean(w http.ResponseWriter, req *http.Request) {
 	err := clean()
 	if err != nil {
-		io.WriteString(w, fmt.Sprintf("%v", err))
+		_, _ = io.WriteString(w, fmt.Sprintf("%v", err))
 		return
 	}
 	_, _ = io.WriteString(w, "Success")
@@ -307,18 +313,19 @@ func initServer() {
 	log.Info("path: ", path)
 	log.Info("host: ", host)
 
+	http.HandleFunc("/delete", Clean)
 	http.HandleFunc("/list", ListFiles)
 	http.HandleFunc("/post", GetFiles)
 
-	if _, err := os.Stat(path); os.IsNotExist(err) {
-		if err := os.MkdirAll(path, os.ModePerm); err != nil {
-			log.Fatal(err)
-		}
+	if stat, err := os.Stat(path); os.IsNotExist(err) {
+		log.Fatalf("%s not exists", path)
+	} else if stat.IsDir() {
+		fs := http.FileServer(http.Dir(path))
+		http.Handle("/", http.StripPrefix("/", fs))
+	} else {
+		fs := http.FileServer(http.Dir(filepath.Dir(path)))
+		http.Handle("/", http.StripPrefix("/", fs))
 	}
-
-	fs := http.FileServer(http.Dir(path))
-	http.Handle("/", http.StripPrefix("/", fs))
-	http.HandleFunc("/delete", Clean)
 
 	log.Error(http.ListenAndServe(host, nil))
 }

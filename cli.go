@@ -9,8 +9,9 @@ import (
 
 // command line parameters
 type options struct {
-	Help   goptions.Help `goptions:"-h, --help, description='Show this help'"`
-	Remove bool          `goptions:"-r, --rm, description='Remove'"`
+	Remove  bool          `goptions:"-r, --rm, description='Remove'"`
+	Help    goptions.Help `goptions:"-h, --help, description='Show this help'"`
+	Version bool          `goptions:"-v, --version, description='Show version information'"`
 
 	goptions.Verbs
 	Server struct {
