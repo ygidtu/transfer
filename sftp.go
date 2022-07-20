@@ -398,7 +398,7 @@ func (cliConf *ClientConfig) PushDownload(url, dstPath string) error {
 	return err
 }
 
-func initSftp(remote string, download, pull, scp bool) {
+func initSftp(remote, local string, download, pull, scp bool) {
 	remoteHost, err := CreateProxy(host)
 	if err != nil {
 		log.Fatalf("wrong format of ssh server [%s]:  %s", host, err)
@@ -440,8 +440,15 @@ func initSftp(remote string, download, pull, scp bool) {
 		if pull {
 			task := &Task{
 				f,
-				filepath.Join(path, f.Path),
+				filepath.Join(local, f.Path),
 				fmt.Sprintf("[%d/%d]%s", idx+1, len(files), f.Name())}
+
+			if f.Path == remote {
+				task = &Task{
+					f,
+					filepath.Join(local, filepath.Base(f.Path)),
+					fmt.Sprintf("[%d/%d]%s", idx+1, len(files), f.Name())}
+			}
 			if err := client.Download(task, scp); err != nil {
 				log.Warn(err)
 			}

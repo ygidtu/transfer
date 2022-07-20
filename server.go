@@ -219,12 +219,6 @@ func Get(task *Task) error {
 	if stat, err := os.Stat(output); !os.IsNotExist(err) {
 		if stat.Size() != file.Size {
 			log.Infof("download incomplete: %v != %v", stat.Size(), file.Size)
-			if stat.Size() < file.Size {
-				return Get(task)
-			} else if stat.Size() > file.Size {
-				_ = os.Remove(output)
-				return Get(task)
-			}
 		}
 	}
 

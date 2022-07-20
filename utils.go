@@ -55,7 +55,7 @@ func listFiles() ([]*File, error) {
 			if err != nil {
 				log.Warnf("failed to save json progress: %v", err)
 			}
-			_ = ioutil.WriteFile(filepath.Join(path, jsonLog), content, 0644)
+			_ = ioutil.WriteFile(filepath.Join(path, jsonLog), content, os.ModePerm)
 		} else {
 			log.Infof("Reload file info from: %s", filepath.Join(path, jsonLog))
 			content, err := ioutil.ReadFile(filepath.Join(path, jsonLog))

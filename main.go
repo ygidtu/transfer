@@ -30,7 +30,7 @@ func main() {
 	goptions.ParseAndFail(&options)
 
 	if options.Version {
-		log.Info("Current version: v0.0.2")
+		log.Info("Current version: v0.0.3")
 		os.Exit(0)
 	}
 
@@ -45,7 +45,7 @@ func main() {
 	} else if options.Verbs == "sftp" {
 		log.Info("Running on sftp mode")
 		defaultSftp(&options)
-		initSftp(options.Sftp.Remote, options.Sftp.Download, options.Sftp.Pull, options.Sftp.Scp)
+		initSftp(options.Sftp.Remote, options.Sftp.Path, options.Sftp.Download, options.Sftp.Pull, options.Sftp.Scp)
 	} else if options.Verbs == "ftp" {
 		defaultFtp(&options)
 		initFtp(options.Ftp.Host, options.Ftp.Remote, options.Ftp.Pull)
