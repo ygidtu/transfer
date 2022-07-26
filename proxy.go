@@ -21,9 +21,6 @@ func CreateProxy(proxy string) (*Proxy, error) {
 	u, err := url.Parse(proxy)
 
 	if err != nil {
-		if !strings.HasPrefix(proxy, "http") {
-			return CreateProxy(fmt.Sprintf("http://%s", proxy))
-		}
 		return nil, err
 	}
 
@@ -43,10 +40,6 @@ func CreateProxy(proxy string) (*Proxy, error) {
 			log.Fatalf(err.Error())
 		}
 		p.Username = user.Username
-	}
-
-	if p.Port == "" {
-		p.Port = "22"
 	}
 
 	return p, nil

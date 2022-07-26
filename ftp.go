@@ -7,203 +7,184 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 )
 
-// FtpConfig 连接的配置
-type FtpConfig struct {
-	Host     string
-	Port     string
-	Username string
-	Password string
+// FtpClient 连接的配置
+type FtpClient struct {
+	Host   *Proxy
+	Client *ftp.ServerConn
 }
 
-func newFtp(host string) *FtpConfig {
-	cfg := &FtpConfig{Port: "21"}
-	hosts := strings.Split(host, "@")
-
-	if len(hosts) < 2 {
-		hosts = strings.Split(hosts[0], ":")
-		cfg.Host = hosts[0]
-		if len(hosts) > 1 {
-			cfg.Password = hosts[1]
-		}
-		return cfg
-	}
-
-	users := strings.Split(hosts[0], ":")
-	cfg.Username = users[0]
-	if len(users) > 1 {
-		cfg.Password = users[1]
-	}
-
-	hosts = strings.Split(hosts[1], ":")
-	cfg.Host = hosts[0]
-	if len(hosts) > 1 {
-		cfg.Port = hosts[1]
-	}
-	return cfg
-}
-
-func ftpMkdir(c *ftp.ServerConn, path string) error {
-	_, err := c.List(path)
+func NewFtp(host string) *FtpClient {
+	remoteHost, err := CreateProxy(host)
 	if err != nil {
-		return c.MakeDir(path)
+		log.Fatalf("wrong format of ssh server [%s]:  %s", host, err)
 	}
-	return nil
-}
 
-func makedir(path string) error {
-	if _, ok := os.Stat(path); os.IsNotExist(ok) {
-		return os.MkdirAll(path, os.ModePerm)
+	if remoteHost.Port == "" {
+		remoteHost.Port = "21"
 	}
-	return nil
-}
 
-func process(task *Task, c *ftp.ServerConn, pull bool) {
-	f := task.Source
-	target := task.Target
+	cfg := &FtpClient{Host: remoteHost}
 
-	if pull {
-		if err := makedir(filepath.Dir(target)); err != nil {
-			log.Warnf("failed to mkdir %s at local: %v", filepath.Dir(target), err)
-			return
-		}
-
-		size := int64(0)
-		if stat, err := os.Stat(f.Path); !os.IsNotExist(err) {
-			size = stat.Size()
-		}
-
-		if size > f.Size {
-			log.Warnf("local file seems corrupted")
-			if err := os.Remove(target); err != nil {
-				log.Warnf("failed to delete lcoal file %s: %v", target, err)
-				return
-			}
-		}
-
-		//bar := BytesBar(f.Size, filepath.Base(f.Path))
-		w, err := os.OpenFile(target, os.O_APPEND|os.O_WRONLY|os.O_CREATE, os.ModePerm)
-		if err != nil {
-			log.Warnf("failed to open local file %s: %v", f.Path, err)
-			return
-		}
-
-		if f.Size > size {
-			log.Infof("%s <- %s [restore from: %s]", target, f.Path, ByteCountDecimal(size))
-		} else {
-			log.Infof("%s <- %s", target, f.Path)
-		}
-
-		resp, err := c.RetrFrom(f.Path, uint64(size))
-		if err != nil {
-			log.Warnf("failed to open file %s from remote: %v", f.Path, err)
-		}
-
-		bar := BytesBar(size, task.ID)
-		if _, err = io.Copy(io.MultiWriter(w, bar), resp); err != nil {
-			log.Warnf("failed to get file from remote: %v", err)
-		}
-		_ = bar.Finish()
-		_ = w.Close()
-	} else {
-		if f.Path != path {
-			f.Path = filepath.Join(path, f.Path)
-		}
-
-		if err := ftpMkdir(c, filepath.Dir(target)); err != nil {
-			log.Warnf("failed to mkdir %s at remote: %v", filepath.Dir(target), err)
-			return
-		}
-
-		offset, err := c.FileSize(target)
-		if err != nil {
-			offset = 0
-		}
-
-		if offset > f.Size {
-			log.Warnf("remote file seems corrupted")
-			if err = c.Delete(target); err != nil {
-				log.Warnf("failed to delete remote file %s: %v", target, err)
-				return
-			}
-		}
-
-		bar := BytesBar(f.Size, filepath.Base(f.Path))
-		r, err := os.Open(f.Path)
-		if err != nil {
-			log.Warnf("failed to open local file %s: %v", f.Path, err)
-			return
-		}
-
-		if offset > 0 {
-			log.Infof("%s -> %s [restore from: %s]", f.Path, target, ByteCountDecimal(offset))
-			if _, err := r.Seek(offset, 0); err != nil {
-				log.Warnf("failed to seek %s: %v", f.Path, err)
-				return
-			}
-		} else {
-			log.Infof("%s -> %s", f.Path, target)
-		}
-
-		reader := progressbar.NewReader(r, bar)
-		err = c.StorFrom(target, &reader, uint64(offset))
-		if err != nil {
-			log.Warnf("failed to put file to remote: %v", err)
-		}
-		_ = bar.Finish()
-		_ = reader.Close()
-		_ = r.Close()
-	}
-}
-
-func initFtp(host, remote string, pull bool) {
-
-	cfg := newFtp(host)
-	log.Infof("Connect to %s:%s", cfg.Host, cfg.Port)
-	c, err := ftp.Dial(fmt.Sprintf("%s:%s", cfg.Host, cfg.Port), ftp.DialWithTimeout(5*time.Second))
+	c, err := ftp.Dial(cfg.Host.Addr(), ftp.DialWithTimeout(5*time.Second))
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	if cfg.Username != "" && cfg.Password != "" {
-		err = c.Login(cfg.Username, cfg.Password)
+	if cfg.Host.Username != "" && cfg.Host.Password != "" {
+		err = c.Login(cfg.Host.Username, cfg.Host.Password)
 		if err != nil {
 			log.Fatal(err)
 		}
 	}
+	cfg.Client = c
+	return cfg
+}
 
-	if pull {
-		target, err := c.List(remote)
+func (fc *FtpClient) Put(source, target *File) error {
+	if source.IsLocal && !target.IsLocal {
+
+		if err := fc.Mkdir(filepath.Dir(target.Path)); err != nil {
+			return fmt.Errorf("failed to mkdir %s at remote: %v", filepath.Dir(target.Path), err)
+		}
+
+		offset, err := fc.Client.FileSize(target.Path)
+		if err != nil {
+			offset = 0
+		}
+
+		if offset > source.Size {
+			log.Warnf("remote file seems corrupted")
+			if err = fc.Client.Delete(target.Path); err != nil {
+				return fmt.Errorf("failed to delete remote file %s: %v", target.Path, err)
+			}
+		}
+
+		bar := BytesBar(source.Size, source.Name())
+		defer bar.Finish()
+		r, err := os.Open(source.Path)
+		if err != nil {
+			return fmt.Errorf("failed to open local file %s: %v", source.Path, err)
+		}
+		defer r.Close()
+
+		if offset > 0 {
+			log.Infof("%s -> %s [restore from: %s]", source.Path, target.Path, ByteCountDecimal(offset))
+			if _, err := r.Seek(offset, 0); err != nil {
+				return fmt.Errorf("failed to seek %s: %v", source.Path, err)
+			}
+		} else {
+			log.Infof("%s -> %s", source.Path, target.Path)
+		}
+
+		reader := progressbar.NewReader(r, bar)
+		defer reader.Close()
+		err = fc.Client.StorFrom(target.Path, &reader, uint64(offset))
+		if err != nil {
+			log.Warnf("failed to put file to remote: %v", err)
+		}
+		return nil
+	}
+
+	return fmt.Errorf("soure file [%v] should be local, target file [%v] should be remote", source, target)
+}
+
+func (fc *FtpClient) Pull(source, target *File) error {
+	if !source.IsLocal && target.IsLocal {
+		if err := target.CheckParent(); err != nil {
+			return err
+		}
+
+		size := int64(0)
+		if stat, err := os.Stat(target.Path); !os.IsNotExist(err) {
+			size = stat.Size()
+		}
+
+		if size > source.Size {
+			log.Warnf("local file seems corrupted")
+			if err := os.Remove(target.Path); err != nil {
+				return fmt.Errorf("failed to delete lcoal file %s: %v", target.Path, err)
+			}
+		}
+
+		//bar := BytesBar(f.Size, filepath.Base(f.Path))
+		w, err := os.OpenFile(target.Path, os.O_APPEND|os.O_WRONLY|os.O_CREATE, os.ModePerm)
+		if err != nil {
+			return fmt.Errorf("failed to open local file %s: %v", target.Path, err)
+		}
+		defer w.Close()
+
+		if source.Size > size {
+			log.Infof("%s <- %s [restore from: %s]", target.Path, source.Path, ByteCountDecimal(size))
+		} else {
+			log.Infof("%s <- %s", target.Path, source.Path)
+		}
+
+		resp, err := fc.Client.RetrFrom(source.Path, uint64(size))
+		if err != nil {
+			log.Warnf("failed to open file %s from remote: %v", source.Path, err)
+		}
+
+		bar := BytesBar(size, source.Name())
+		defer bar.Finish()
+		if _, err = io.Copy(io.MultiWriter(w, bar), resp); err != nil {
+			log.Warnf("failed to get file from remote: %v", err)
+		}
+
+		return nil
+	}
+
+	return fmt.Errorf("soure file [%v] should be remote, target file [%v] should be local", source, target)
+}
+
+func (fc *FtpClient) Mkdir(path string) error {
+	_, err := fc.Client.List(path)
+	if err != nil {
+		return fc.Client.MakeDir(path)
+	}
+	return nil
+}
+
+func initFtp(opt *options) {
+	if opt.Ftp.Path == "" {
+		opt.Ftp.Path = "./"
+	}
+
+	if abs, err := filepath.Abs(opt.Ftp.Path); err != nil {
+		log.Fatal("The input path cannot convert to absolute: %s : %v", opt.Ftp.Path, err)
+	} else {
+		opt.Ftp.Path = abs
+	}
+
+	client := NewFtp(opt.Ftp.Host)
+	if opt.Ftp.Pull {
+		fs, err := ListFilesFtp(client, opt.Ftp.Remote)
 		if err != nil {
 			log.Fatal(err)
 		}
 
-		for idx, f := range target {
-			task := &Task{
-				&File{Path: filepath.Join(remote, filepath.Base(f.Name)), Size: int64(f.Size)},
-				filepath.Join(path, filepath.Base(f.Name)),
-				fmt.Sprintf("[%d/%d]%s", idx+1, len(target), filepath.Base(f.Name))}
-			process(task, c, pull)
+		for _, f := range fs {
+			if err := client.Pull(f, f.GetTarget(opt.Ftp.Remote, opt.Ftp.Path)); err != nil {
+				log.Warn(err)
+			}
 		}
 	} else {
-		target, err := listFiles()
+		root, err := NewFile(opt.Ftp.Path)
 		if err != nil {
 			log.Fatal(err)
 		}
 
-		for idx, f := range target {
-			task := &Task{f, filepath.Join(remote, f.Path), fmt.Sprintf("[%d/%d]%s", idx+1, len(target), filepath.Base(f.Path))}
-			if f.Path == path {
-				task = &Task{f, filepath.Join(remote, f.Name()), fmt.Sprintf("[%d/%d]%s", idx+1, len(target), filepath.Base(f.Path))}
-			}
-			process(task, c, pull)
+		fs, err := ListFilesLocal(root)
+		if err != nil {
+			log.Fatal(err)
 		}
 
-	}
-	if err = c.Quit(); err != nil {
-		log.Fatalf("failed to quite ftp: %v", err)
+		for _, f := range fs {
+			if err := client.Pull(f, f.GetTarget(opt.Ftp.Path, opt.Ftp.Remote)); err != nil {
+				log.Warn(err)
+			}
+		}
 	}
 }
