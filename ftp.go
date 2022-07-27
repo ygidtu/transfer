@@ -62,13 +62,11 @@ func (fc *FtpClient) Put(source, target *File) error {
 			}
 		}
 
-		bar := BytesBar(source.Size, source.Name())
-		defer bar.Finish()
+		bar := BytesBar(source.Size, source.ID)
 		r, err := os.Open(source.Path)
 		if err != nil {
 			return fmt.Errorf("failed to open local file %s: %v", source.Path, err)
 		}
-		defer r.Close()
 
 		if offset > 0 {
 			log.Infof("%s -> %s [restore from: %s]", source.Path, target.Path, ByteCountDecimal(offset))
@@ -80,11 +78,15 @@ func (fc *FtpClient) Put(source, target *File) error {
 		}
 
 		reader := progressbar.NewReader(r, bar)
-		defer reader.Close()
 		err = fc.Client.StorFrom(target.Path, &reader, uint64(offset))
 		if err != nil {
 			log.Warnf("failed to put file to remote: %v", err)
 		}
+
+		_ = reader.Close()
+		_ = bar.Finish()
+		_ = r.Close()
+
 		return nil
 	}
 
@@ -114,7 +116,6 @@ func (fc *FtpClient) Pull(source, target *File) error {
 		if err != nil {
 			return fmt.Errorf("failed to open local file %s: %v", target.Path, err)
 		}
-		defer w.Close()
 
 		if source.Size > size {
 			log.Infof("%s <- %s [restore from: %s]", target.Path, source.Path, ByteCountDecimal(size))
@@ -127,11 +128,15 @@ func (fc *FtpClient) Pull(source, target *File) error {
 			log.Warnf("failed to open file %s from remote: %v", source.Path, err)
 		}
 
-		bar := BytesBar(size, source.Name())
-		defer bar.Finish()
+		bar := BytesBar(size, source.ID)
+
 		if _, err = io.Copy(io.MultiWriter(w, bar), resp); err != nil {
 			log.Warnf("failed to get file from remote: %v", err)
 		}
+
+		_ = resp.Close()
+		_ = bar.Finish()
+		_ = w.Close()
 
 		return nil
 	}
@@ -165,7 +170,8 @@ func initFtp(opt *options) {
 			log.Fatal(err)
 		}
 
-		for _, f := range fs {
+		for i, f := range fs {
+			f.ID = fmt.Sprintf("[%d/%d] %s", i+1, len(fs), f.Name())
 			if err := client.Pull(f, f.GetTarget(opt.Ftp.Remote, opt.Ftp.Path)); err != nil {
 				log.Warn(err)
 			}
@@ -181,7 +187,8 @@ func initFtp(opt *options) {
 			log.Fatal(err)
 		}
 
-		for _, f := range fs {
+		for i, f := range fs {
+			f.ID = fmt.Sprintf("[%d/%d] %s", i+1, len(fs), f.Name())
 			if err := client.Pull(f, f.GetTarget(opt.Ftp.Path, opt.Ftp.Remote)); err != nil {
 				log.Warn(err)
 			}

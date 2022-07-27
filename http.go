@@ -156,19 +156,20 @@ func (hc *HTTPClient) Put(source *File, target *File) error {
 		if err != nil {
 			return fmt.Errorf("failed to open %s: %v", source.Path, err)
 		}
-		defer f.Close()
 		_, _ = f.Seek(start, 0)
 
 		bar := BytesBar(total-start, source.Name())
-		defer bar.Finish()
 		reader := progressbar.NewReader(f, bar)
-		defer reader.Close()
 		resp, err = http.Post(u, "", &reader)
-		defer resp.Body.Close()
 		body, err := ioutil.ReadAll(resp.Body)
 		if err != nil {
 			return fmt.Errorf("%s: %v", string(body), err)
 		}
+
+		_ = reader.Close()
+		_ = resp.Body.Close()
+		_ = f.Close()
+		_ = bar.Finish()
 
 		return nil
 	}
@@ -216,12 +217,6 @@ func (hc *HTTPClient) Pull(source *File, target *File) error {
 		w := bufio.NewWriter(f)
 		bar := BytesBar(req.Size, source.Name())
 
-		defer func() {
-			_ = bar.Finish()
-			_ = w.Flush()
-			_ = f.Close()
-		}()
-
 		_, err = io.Copy(io.MultiWriter(w, bar), req.Body)
 		if err != nil {
 			return fmt.Errorf("failed to copy %s: %v", target.Path, err)
@@ -233,6 +228,9 @@ func (hc *HTTPClient) Pull(source *File, target *File) error {
 			}
 		}
 
+		_ = bar.Finish()
+		_ = w.Flush()
+		_ = f.Close()
 		return nil
 	}
 	return fmt.Errorf("soure file [%v] should be remote, target file [%v] should be local", source, target)
@@ -243,7 +241,6 @@ func initHttp(opt *options) {
 	if opt.Trans.Host == "" {
 		opt.Trans.Host = "127.0.0.1:8000"
 	} else {
-
 		if !strings.Contains(opt.Trans.Host, ":") {
 			opt.Trans.Host = fmt.Sprintf("%s:8000", opt.Trans.Host)
 		}

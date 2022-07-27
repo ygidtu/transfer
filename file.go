@@ -17,6 +17,7 @@ type File struct {
 	IsFile  bool
 	IsLink  bool
 	IsLocal bool
+	ID      string
 }
 
 func (file *File) Name() string {
@@ -26,24 +27,22 @@ func (file *File) Name() string {
 func (file *File) CheckParent() error {
 	if file.IsLocal {
 		parent := filepath.Dir(file.Path)
-		if _, err := os.Stat(parent); !os.IsNotExist(err) {
-			return os.MkdirAll(parent, os.ModePerm)
+		if _, err := os.Stat(parent); os.IsNotExist(err) {
+			err = os.MkdirAll(parent, os.ModePerm)
+			if err != nil {
+				return fmt.Errorf("failed to mkdir remove directory: %s - %v", parent, err)
+			}
 		}
+		return nil
 	}
 	return fmt.Errorf("do not support check remote parents")
 }
 
 func (file *File) GetTarget(source, target string) *File {
-	if file.IsLocal {
-		path := strings.TrimLeft(file.Path, source)
-		path = strings.TrimLeft(path, "/")
-
-		return &File{Path: filepath.Join(target, path), IsLocal: false, IsFile: file.IsFile}
-	}
-	path := strings.TrimLeft(file.Path, target)
+	path := strings.TrimLeft(file.Path, source)
 	path = strings.TrimLeft(path, "/")
 
-	return &File{Path: filepath.Join(source, path), IsLocal: true, IsFile: file.IsFile}
+	return &File{Path: filepath.Join(target, path), IsLocal: !file.IsLocal, IsFile: file.IsFile}
 }
 
 func NewFile(path string) (*File, error) {
@@ -66,7 +65,7 @@ func ListFilesLocal(file *File) ([]*File, error) {
 		err = filepath.Walk(file.Path, func(p string, info os.FileInfo, err error) error {
 			if !info.IsDir() {
 				files = append(files, &File{
-					Path:   filepath.Join(file.Path, p),
+					Path:   p,
 					Size:   info.Size(),
 					IsFile: !info.IsDir(), IsLocal: true})
 			}
