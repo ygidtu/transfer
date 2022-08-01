@@ -7,11 +7,13 @@ import (
 )
 
 var (
-	log *zap.SugaredLogger
+	log        *zap.SugaredLogger
+	SkipHidden = false
 )
 
 // command line parameters
 type options struct {
+	Skip    bool          `goptions:"--skip, description='Skip hidden files'"`
 	Help    goptions.Help `goptions:"-h, --help, description='Show this help'"`
 	Version bool          `goptions:"-v, --version, description='Show version information'"`
 
@@ -54,6 +56,8 @@ func main() {
 		log.Info("Current version: v0.0.3")
 		os.Exit(0)
 	}
+
+	SkipHidden = options.Skip
 
 	if options.Verbs == "server" {
 		initServer(&options)

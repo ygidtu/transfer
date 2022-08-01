@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"crypto/tls"
+	"encoding/json"
 	"fmt"
 	"github.com/schollz/progressbar/v3"
 	"io"
@@ -17,29 +18,52 @@ import (
 
 // Url is used to handle the url issues in transport and sftp download mode
 type Url struct {
-	URL       string
-	Size      int64
-	Resume    bool
-	Name      string
-	Body      io.ReadCloser
+	URL    string
+	Size   int64
+	Resume bool
+	Name   string
+	Body   io.ReadCloser
+}
+
+type HTTPClient struct {
+	Host      *Proxy
 	Proxy     *Proxy
 	Transport *http.Transport
 }
 
-func newURL(url string, proxy *Proxy) (*Url, error) {
+func NewHTTPClient(host, proxy string) *HTTPClient {
+	remoteHost, err := CreateProxy(host)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	var proxyP *Proxy
+	var transport *http.Transport
+	if proxy != "" {
+		proxyP, err = CreateProxy(proxy)
+		if err != nil {
+			log.Fatal(proxyP)
+		}
+		transport = &http.Transport{
+			Proxy:           http.ProxyURL(proxyP.URL),
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		}
+	}
+
+	return &HTTPClient{remoteHost, proxyP, transport}
+}
+
+func (hc *HTTPClient) NewUrl(url string) (*Url, error) {
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
 	}
 
-	res := &Url{URL: url, Proxy: proxy}
-	if proxy != nil {
-		res.Transport = &http.Transport{
-			Proxy:           http.ProxyURL(proxy.URL),
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-		}
+	res := &Url{URL: url}
+	client := &http.Client{}
+	if hc.Transport != nil {
+		client.Transport = hc.Transport
 	}
-	client := &http.Client{Transport: res.Transport}
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -68,7 +92,7 @@ func newURL(url string, proxy *Proxy) (*Url, error) {
 	return res, nil
 }
 
-func (u *Url) seek(pos int64) error {
+func (hc *HTTPClient) Seek(u *Url, pos int64) error {
 	if !u.Resume {
 		return fmt.Errorf("%s do not support partial request", u.URL)
 	}
@@ -77,7 +101,7 @@ func (u *Url) seek(pos int64) error {
 		return err
 	}
 
-	client := &http.Client{Transport: u.Transport}
+	client := &http.Client{Transport: hc.Transport}
 
 	req.Header.Set("Range", fmt.Sprintf("bytes=%d-", pos))
 
@@ -91,27 +115,27 @@ func (u *Url) seek(pos int64) error {
 	return nil
 }
 
-type HTTPClient struct {
-	Host  *Proxy
-	Proxy *Proxy
-}
+func (hc *HTTPClient) Get() ([]*File, error) {
+	var files []*File
+	u, err := hc.NewUrl(fmt.Sprintf("%s/list", hc.Host.URL))
 
-func NewHTTPClient(host, proxy string) *HTTPClient {
-	remoteHost, err := CreateProxy(host)
 	if err != nil {
-		log.Fatal(err)
+		return files, err
+	}
+	log.Infof("%v", u)
+	content, err := ioutil.ReadAll(u.Body)
+	if err != nil {
+		return files, err
 	}
 
-	proxyP, err := CreateProxy(proxy)
-	if err != nil {
-		log.Fatal(proxyP)
-	}
-	return &HTTPClient{remoteHost, proxyP}
+	err = json.Unmarshal(content, &files)
+
+	return files, err
 }
 
 func (hc *HTTPClient) Put(source *File, target *File) error {
 	if source.IsLocal && !target.IsLocal {
-		u := fmt.Sprintf("%v/post?path=%v", hc.Host.Addr(), url.PathEscape(target.Path))
+		u := fmt.Sprintf("%v/post?path=%v", hc.Host.URL, url.PathEscape(target.Path))
 
 		if u == "" {
 			return fmt.Errorf("empty url")
@@ -158,9 +182,23 @@ func (hc *HTTPClient) Put(source *File, target *File) error {
 		}
 		_, _ = f.Seek(start, 0)
 
-		bar := BytesBar(total-start, source.Name())
+		bar := BytesBar(total-start, source.ID)
 		reader := progressbar.NewReader(f, bar)
-		resp, err = http.Post(u, "", &reader)
+
+		req, err := http.NewRequest(http.MethodPost, u, &reader)
+		if err != nil {
+			return err
+		}
+
+		client := &http.Client{}
+		if hc.Transport != nil {
+			client.Transport = hc.Transport
+		}
+		resp, err = client.Do(req)
+		if err != nil {
+			return fmt.Errorf("failed to create post client: %v", err)
+		}
+
 		body, err := ioutil.ReadAll(resp.Body)
 		if err != nil {
 			return fmt.Errorf("%s: %v", string(body), err)
@@ -178,7 +216,7 @@ func (hc *HTTPClient) Put(source *File, target *File) error {
 
 func (hc *HTTPClient) Pull(source *File, target *File) error {
 	if !source.IsLocal && target.IsLocal {
-		u := fmt.Sprintf("%s/%v", hc.Host.Addr(), url.PathEscape(source.Path))
+		u := fmt.Sprintf("%s/%v", hc.Host.URL, url.PathEscape(source.Path))
 		if u == "" {
 			return fmt.Errorf("empty url")
 		}
@@ -188,21 +226,21 @@ func (hc *HTTPClient) Pull(source *File, target *File) error {
 			return err
 		}
 
-		req, err := newURL(u, hc.Proxy)
+		req, err := hc.NewUrl(u)
 		if err != nil {
 			return err
 		}
 
 		if stat, err := os.Stat(target.Path); !os.IsNotExist(err) {
 			if stat.Size() == source.Size {
-				log.Infof("%s: skip", source.Name())
+				log.Infof("%s: skip", source.ID)
 				return req.Body.Close()
 			} else if stat.Size() > source.Size {
 				log.Warnf("%v size [%v] > remote [%v], redownload", target.Path, stat.Size(), source.Size)
 				_ = os.Remove(target.Path)
 			} else {
 				log.Infof("Resume from %s", ByteCountDecimal(stat.Size()))
-				err = req.seek(stat.Size())
+				err = hc.Seek(req, stat.Size())
 				if err != nil {
 					log.Error(err)
 				}
@@ -215,22 +253,22 @@ func (hc *HTTPClient) Pull(source *File, target *File) error {
 			return fmt.Errorf("failed to open %s: %v", target.Path, err)
 		}
 		w := bufio.NewWriter(f)
-		bar := BytesBar(req.Size, source.Name())
+		bar := BytesBar(req.Size, source.ID)
 
 		_, err = io.Copy(io.MultiWriter(w, bar), req.Body)
 		if err != nil {
 			return fmt.Errorf("failed to copy %s: %v", target.Path, err)
 		}
 
+		_ = bar.Finish()
+		_ = w.Flush()
+		_ = f.Close()
+
 		if stat, err := os.Stat(target.Path); !os.IsNotExist(err) {
 			if stat.Size() != source.Size {
 				log.Infof("download incomplete: %v != %v", stat.Size(), source.Size)
 			}
 		}
-
-		_ = bar.Finish()
-		_ = w.Flush()
-		_ = f.Close()
 		return nil
 	}
 	return fmt.Errorf("soure file [%v] should be remote, target file [%v] should be local", source, target)
@@ -260,7 +298,6 @@ func initHttp(opt *options) {
 	}
 
 	client := NewHTTPClient(opt.Trans.Host, opt.Trans.Proxy)
-	//
 
 	if opt.Trans.Post {
 		root, err := NewFile(opt.Trans.Path)
@@ -272,14 +309,31 @@ func initHttp(opt *options) {
 			log.Fatal(err)
 		}
 
-		for _, f := range fs {
+		for i, f := range fs {
+			f.ID = fmt.Sprintf("[%d/%d] %v", i+1, len(fs), f.Name())
 			target := f.GetTarget(root.Path, "")
 			if err := client.Put(f, target); err != nil {
 				log.Warn(err)
 			}
 		}
 	} else {
-		//fs := http.Get()
+		if _, ok := os.Stat(opt.Trans.Path); os.IsNotExist(ok) {
+			if err := os.MkdirAll(opt.Trans.Path, os.ModePerm); err != nil {
+				log.Fatal(err)
+			}
+		}
+		fs, err := client.Get()
+		if err != nil {
+			log.Fatalf("failed to get list of file: %v", err)
+		}
+
+		for i, f := range fs {
+			f.IsLocal = false
+			f.ID = fmt.Sprintf("[%d/%d] %v", i+1, len(fs), f.Name())
+			if err := client.Pull(f, f.GetTarget("", opt.Trans.Path)); err != nil {
+				log.Warn(err)
+			}
+		}
 	}
 	return
 }

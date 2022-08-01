@@ -39,7 +39,7 @@ func (file *File) CheckParent() error {
 }
 
 func (file *File) GetTarget(source, target string) *File {
-	path := strings.TrimLeft(file.Path, source)
+	path := strings.TrimLeft(file.Path, filepath.Dir(source))
 	path = strings.TrimLeft(path, "/")
 
 	return &File{Path: filepath.Join(target, path), IsLocal: !file.IsLocal, IsFile: file.IsFile}
@@ -63,6 +63,14 @@ func ListFilesLocal(file *File) ([]*File, error) {
 
 		bar := progressbar.Default(-1, fmt.Sprintf("Searching files %s", file.Path))
 		err = filepath.Walk(file.Path, func(p string, info os.FileInfo, err error) error {
+			if SkipHidden && info.Name() != "./" && info.Name() != "." {
+				if strings.HasPrefix(info.Name(), ".") {
+					if info.IsDir() {
+						return filepath.SkipDir
+					}
+					return nil
+				}
+			}
 			if !info.IsDir() {
 				files = append(files, &File{
 					Path:   p,
@@ -91,6 +99,12 @@ func ListFilesSftp(cliConf *SftpClient, path string) ([]*File, error) {
 				log.Warn(w.Err())
 			}
 
+			if SkipHidden && w.Path() != "." && w.Path() != "./" {
+				if strings.HasPrefix(filepath.Base(w.Path()), ".") {
+					continue
+				}
+			}
+
 			if !w.Stat().IsDir() {
 				files = append(files, &File{Path: w.Path(), Size: w.Stat().Size(), IsFile: true, IsLocal: false})
 			}
@@ -112,6 +126,9 @@ func ListFilesFtp(cliConf *FtpClient, path string) ([]*File, error) {
 		return files, err
 	}
 	for _, e := range entries {
+		if SkipHidden && e.Name != "." && e.Name != "./" && strings.HasPrefix(e.Name, ".") {
+			continue
+		}
 		if e.Type == ftp.EntryTypeFile {
 			files = append(files, &File{Path: e.Name, Size: int64(e.Size), IsFile: true, IsLocal: false})
 		} else if e.Type == ftp.EntryTypeLink {

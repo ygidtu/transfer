@@ -131,6 +131,11 @@ func initServer(opt *options) {
 	http.HandleFunc("/list", ListFiles)
 	http.HandleFunc("/post", GetFiles)
 
+	if _, ok := os.Stat(opt.Server.Path); os.IsNotExist(ok) {
+		if err := os.MkdirAll(opt.Server.Path, os.ModePerm); err != nil {
+			log.Fatal(err)
+		}
+	}
 	f, err := NewFile(opt.Server.Path)
 	if err != nil {
 		log.Fatal(err)
