@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"github.com/jlaffaye/ftp"
-	"github.com/schollz/progressbar/v3"
 	"os"
 	"path/filepath"
 	"strings"
@@ -60,8 +59,7 @@ func ListFilesLocal(file *File) ([]*File, error) {
 		files = append(files, file)
 	} else {
 		log.Infof("List files from %s", file.Path)
-
-		bar := progressbar.Default(-1, fmt.Sprintf("Searching files %s", file.Path))
+		
 		err = filepath.Walk(file.Path, func(p string, info os.FileInfo, err error) error {
 			if SkipHidden && info.Name() != "./" && info.Name() != "." {
 				if strings.HasPrefix(info.Name(), ".") {
@@ -73,11 +71,11 @@ func ListFilesLocal(file *File) ([]*File, error) {
 			}
 			if !info.IsDir() {
 				files = append(files, &File{
-					Path:   p,
-					Size:   info.Size(),
-					IsFile: !info.IsDir(), IsLocal: true})
+					Path:    p,
+					Size:    info.Size(),
+					IsFile:  !info.IsDir(),
+					IsLocal: true})
 			}
-			_ = bar.Add(1)
 			return nil
 		})
 	}

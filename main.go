@@ -1,21 +1,25 @@
 package main
 
 import (
+	"github.com/vbauerster/mpb/v7"
 	"github.com/voxelbrain/goptions"
 	"go.uber.org/zap"
 	"os"
+	"time"
 )
 
 var (
 	log        *zap.SugaredLogger
+	progress   *mpb.Progress
 	SkipHidden = false
 )
 
 // command line parameters
 type options struct {
-	Skip    bool          `goptions:"--skip, description='Skip hidden files'"`
-	Help    goptions.Help `goptions:"-h, --help, description='Show this help'"`
-	Version bool          `goptions:"-v, --version, description='Show version information'"`
+	Concurrent int           `goptions:"-n, --n-jobs, description='the number of jobs to run'"`
+	Skip       bool          `goptions:"--skip, description='skip hidden files'"`
+	Help       goptions.Help `goptions:"-h, --help, description='show this help'"`
+	Version    bool          `goptions:"-v, --version, description='show version information'"`
 
 	goptions.Verbs
 	Server struct {
@@ -53,11 +57,19 @@ func main() {
 	goptions.ParseAndFail(&options)
 
 	if options.Version {
-		log.Info("Current version: v0.0.3")
+		log.Info("Current version: v0.0.4")
 		os.Exit(0)
 	}
 
+	if options.Concurrent < 1 {
+		options.Concurrent = 1
+	}
+
 	SkipHidden = options.Skip
+
+	progress = mpb.New(
+		mpb.WithWidth(60),
+		mpb.WithRefreshRate(180*time.Millisecond))
 
 	if options.Verbs == "server" {
 		initServer(&options)

@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"github.com/jlaffaye/ftp"
-	"github.com/schollz/progressbar/v3"
 	"io"
 	"os"
 	"path/filepath"
@@ -77,16 +76,13 @@ func (fc *FtpClient) Put(source, target *File) error {
 			log.Infof("%s -> %s", source.Path, target.Path)
 		}
 
-		reader := progressbar.NewReader(r, bar)
-		err = fc.Client.StorFrom(target.Path, &reader, uint64(offset))
+		reader := bar.ProxyReader(r)
+		err = fc.Client.StorFrom(target.Path, reader, uint64(offset))
 		if err != nil {
 			log.Warnf("failed to put file to remote: %v", err)
 		}
-
 		_ = reader.Close()
-		_ = bar.Finish()
 		_ = r.Close()
-
 		return nil
 	}
 
@@ -129,15 +125,14 @@ func (fc *FtpClient) Pull(source, target *File) error {
 		}
 
 		bar := BytesBar(size, source.ID)
-
-		if _, err = io.Copy(io.MultiWriter(w, bar), resp); err != nil {
+		reader := bar.ProxyReader(resp)
+		if _, err = io.Copy(w, reader); err != nil {
 			log.Warnf("failed to get file from remote: %v", err)
 		}
 
+		_ = reader.Close()
 		_ = resp.Close()
-		_ = bar.Finish()
 		_ = w.Close()
-
 		return nil
 	}
 
@@ -164,18 +159,13 @@ func initFtp(opt *options) {
 	}
 
 	client := NewFtp(opt.Ftp.Host)
+	files := make([]*File, 0, 0)
 	if opt.Ftp.Pull {
 		fs, err := ListFilesFtp(client, opt.Ftp.Remote)
 		if err != nil {
 			log.Fatal(err)
 		}
-
-		for i, f := range fs {
-			f.ID = fmt.Sprintf("[%d/%d] %s", i+1, len(fs), f.Name())
-			if err := client.Pull(f, f.GetTarget(opt.Ftp.Remote, opt.Ftp.Path)); err != nil {
-				log.Warn(err)
-			}
-		}
+		files = append(files, fs...)
 	} else {
 		root, err := NewFile(opt.Ftp.Path)
 		if err != nil {
@@ -186,12 +176,33 @@ func initFtp(opt *options) {
 		if err != nil {
 			log.Fatal(err)
 		}
-
-		for i, f := range fs {
-			f.ID = fmt.Sprintf("[%d/%d] %s", i+1, len(fs), f.Name())
-			if err := client.Pull(f, f.GetTarget(opt.Ftp.Path, opt.Ftp.Remote)); err != nil {
-				log.Warn(err)
-			}
-		}
+		files = append(files, fs...)
 	}
+
+	taskChan := make(chan *File)
+
+	for i := 0; i < opt.Concurrent; i++ {
+		go func() {
+			for {
+				f, ok := <-taskChan
+
+				if !ok {
+					break
+				}
+
+				if opt.Ftp.Pull {
+					if err := client.Pull(f, f.GetTarget(opt.Ftp.Remote, opt.Ftp.Path)); err != nil {
+						log.Warn(err)
+					}
+				} else {
+					if err := client.Put(f, f.GetTarget(opt.Ftp.Path, opt.Ftp.Remote)); err != nil {
+						log.Warn(err)
+					}
+				}
+			}
+		}()
+	}
+
+	close(taskChan)
+	defer progress.Wait()
 }

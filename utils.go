@@ -2,7 +2,8 @@ package main
 
 import (
 	"fmt"
-	"github.com/schollz/progressbar/v3"
+	"github.com/vbauerster/mpb/v7"
+	"github.com/vbauerster/mpb/v7/decor"
 )
 
 // ByteCountDecimal human-readable file size
@@ -19,12 +20,27 @@ func ByteCountDecimal(b int64) string {
 	return fmt.Sprintf("%.1f %cB", float64(b)/float64(div), "kMGTPE"[exp])
 }
 
-// BytesBar is used to generate progress bar
-func BytesBar(size int64, name string) *progressbar.ProgressBar {
+func BytesBar(size int64, name string) *mpb.Bar {
 
 	if len(name) > 50 {
 		name = fmt.Sprintf("%s...", name[0:51])
 	}
 
-	return progressbar.DefaultBytes(size, name)
+	return progress.New(
+		size,
+		mpb.BarStyle().Lbound("╢").Filler("▌").Tip("▌").Padding("░").Rbound("╟"),
+		// override default "[=>-]" style
+		mpb.PrependDecorators(
+			// display our name with one space on the right
+			decor.Name(name, decor.WC{W: len(name) + 1, C: decor.DidentRight}),
+		),
+		mpb.AppendDecorators(
+			decor.AverageETA(decor.ET_STYLE_GO),
+			decor.Name(" "),
+			decor.AverageSpeed(decor.UnitKB, "% .2f"),
+			decor.Name(" ["),
+			decor.CountersKibiByte("% .2f / % .2f"),
+			decor.Name(" ]"),
+		),
+	)
 }

@@ -5,7 +5,6 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
-	"github.com/schollz/progressbar/v3"
 	"io"
 	"io/ioutil"
 	"net/http"
@@ -183,9 +182,9 @@ func (hc *HTTPClient) Put(source *File, target *File) error {
 		_, _ = f.Seek(start, 0)
 
 		bar := BytesBar(total-start, source.ID)
-		reader := progressbar.NewReader(f, bar)
+		reader := bar.ProxyReader(f)
 
-		req, err := http.NewRequest(http.MethodPost, u, &reader)
+		req, err := http.NewRequest(http.MethodPost, u, reader)
 		if err != nil {
 			return err
 		}
@@ -207,8 +206,6 @@ func (hc *HTTPClient) Put(source *File, target *File) error {
 		_ = reader.Close()
 		_ = resp.Body.Close()
 		_ = f.Close()
-		_ = bar.Finish()
-
 		return nil
 	}
 	return fmt.Errorf("soure file [%v] should be local, target file [%v] should be remote", source, target)
@@ -254,13 +251,13 @@ func (hc *HTTPClient) Pull(source *File, target *File) error {
 		}
 		w := bufio.NewWriter(f)
 		bar := BytesBar(req.Size, source.ID)
-
-		_, err = io.Copy(io.MultiWriter(w, bar), req.Body)
+		reader := bar.ProxyReader(req.Body)
+		_, err = io.Copy(w, reader)
 		if err != nil {
 			return fmt.Errorf("failed to copy %s: %v", target.Path, err)
 		}
 
-		_ = bar.Finish()
+		_ = reader.Close()
 		_ = w.Flush()
 		_ = f.Close()
 
@@ -299,6 +296,31 @@ func initHttp(opt *options) {
 
 	client := NewHTTPClient(opt.Trans.Host, opt.Trans.Proxy)
 
+	taskChan := make(chan *File)
+	for i := 0; i < opt.Concurrent; i++ {
+		go func() {
+			for {
+				f, ok := <-taskChan
+
+				if !ok {
+					break
+				}
+
+				if opt.Trans.Post {
+					target := f.GetTarget(root.Path, "")
+					if err := client.Put(f, target); err != nil {
+						log.Warn(err)
+					}
+				} else {
+					f.IsLocal = false
+					if err := client.Pull(f, f.GetTarget("", opt.Trans.Path)); err != nil {
+						log.Warn(err)
+					}
+				}
+			}
+		}()
+	}
+
 	if opt.Trans.Post {
 		root, err := NewFile(opt.Trans.Path)
 		if err != nil {
@@ -311,10 +333,7 @@ func initHttp(opt *options) {
 
 		for i, f := range fs {
 			f.ID = fmt.Sprintf("[%d/%d] %v", i+1, len(fs), f.Name())
-			target := f.GetTarget(root.Path, "")
-			if err := client.Put(f, target); err != nil {
-				log.Warn(err)
-			}
+			taskChan <- f
 		}
 	} else {
 		if _, ok := os.Stat(opt.Trans.Path); os.IsNotExist(ok) {
@@ -330,10 +349,11 @@ func initHttp(opt *options) {
 		for i, f := range fs {
 			f.IsLocal = false
 			f.ID = fmt.Sprintf("[%d/%d] %v", i+1, len(fs), f.Name())
-			if err := client.Pull(f, f.GetTarget("", opt.Trans.Path)); err != nil {
-				log.Warn(err)
-			}
+			taskChan <- f
 		}
 	}
+
+	close(taskChan)
+	defer progress.Wait()
 	return
 }

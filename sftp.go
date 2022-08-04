@@ -1,11 +1,8 @@
 package main
 
 import (
-	"context"
 	"fmt"
-	"github.com/bramvdbogaerde/go-scp"
 	"github.com/pkg/sftp"
-	"github.com/schollz/progressbar/v3"
 	"golang.org/x/crypto/ssh"
 	px "golang.org/x/net/proxy"
 	"io"
@@ -23,11 +20,11 @@ type SftpClient struct {
 	Proxy      *Proxy
 	sshClient  *ssh.Client  //ssh client
 	sftpClient *sftp.Client //sftp client
-	scpClient  *scp.Client
 	SCP        bool
+	Concurrent int
 }
 
-func NewSftp(host, proxy string, scp bool) *SftpClient {
+func NewSftp(host, proxy string, scp bool, concurrent int) *SftpClient {
 	remoteHost, err := CreateProxy(host)
 	if err != nil {
 		log.Fatalf("wrong format of ssh server [%s]:  %s", host, err)
@@ -37,7 +34,7 @@ func NewSftp(host, proxy string, scp bool) *SftpClient {
 		remoteHost.Port = "22"
 	}
 
-	client := &SftpClient{Host: remoteHost, SCP: scp}
+	client := &SftpClient{Host: remoteHost, SCP: scp, Concurrent: concurrent}
 	if proxy != "" {
 		p, err := CreateProxy(proxy)
 		if err != nil {
@@ -49,7 +46,7 @@ func NewSftp(host, proxy string, scp bool) *SftpClient {
 	if err := client.Connect(); err != nil {
 		log.Fatal(err)
 	}
-
+	log.Infof("connected to %s", client.Host.Addr())
 	return client
 }
 
@@ -59,16 +56,10 @@ func sshConfig(username, password string) (*ssh.ClientConfig, error) {
 	var methods []ssh.AuthMethod
 
 	if password != "" {
-		log.Infof("Auth through password")
+		log.Debugf("Auth through password")
 		methods = append(methods, ssh.Password(password))
 	} else if _, err := os.Stat(idRsa); !os.IsNotExist(err) {
-		log.Infof("Auth through public key")
-		// var hostKey ssh.PublicKey
-		// A public key may be used to authenticate against the remote
-		// server by using an unencrypted PEM-encoded private key file.
-		//
-		// If you have an encrypted private key, the crypto/x509 package
-		// can be used to decrypt it.
+		log.Debugf("Auth through public key")
 		key, err := ioutil.ReadFile(idRsa)
 		if err != nil {
 			return nil, fmt.Errorf("unable to read private key: %v", err)
@@ -99,10 +90,8 @@ func sshClient(host *Proxy) (*ssh.Client, error) {
 	if err != nil {
 		return nil, err
 	}
-
 	// connect to ssh
 	conn, err := ssh.Dial("tcp", host.Addr(), config)
-	log.Infof("connected to %s", host.Addr())
 	if err != nil {
 		return nil, fmt.Errorf("failed to dial: %s", err)
 	}
@@ -116,7 +105,6 @@ func sshClientConn(conn net.Conn, host *Proxy) (*ssh.Client, error) {
 	}
 
 	c, chans, reqs, err := ssh.NewClientConn(conn, fmt.Sprintf("%s:%v", host.Host, host.Port), config)
-
 	if err != nil {
 		return nil, err
 	}
@@ -180,13 +168,16 @@ func (cliConf *SftpClient) Connect() error {
 	if err != nil {
 		return fmt.Errorf("failed to create client: %s", err)
 	}
-	cliConf.sftpClient = client
 
-	client_, err := scp.NewClientBySSH(cliConf.sshClient)
-	if err != nil {
-		return fmt.Errorf("failed to create scp client: %s", err)
+	if cliConf.SCP {
+		log.Infof("Running on SCP mode")
+		client, err = sftp.NewClient(cliConf.sshClient, sftp.UseConcurrentWrites(true), sftp.UseConcurrentReads(true))
+		if err != nil {
+			return fmt.Errorf("failed to create client: %s", err)
+		}
 	}
-	cliConf.scpClient = &client_
+
+	cliConf.sftpClient = client
 
 	return err
 }
@@ -248,10 +239,6 @@ func (cliConf *SftpClient) Put(source, target *File) error {
 			return fmt.Errorf("failed to open file %s: %v", source.Path, err)
 		}
 
-		if cliConf.SCP {
-			return cliConf.scpClient.CopyFile(context.Background(), srcFile, target.Path, "0644")
-		}
-
 		// append file
 		dstFile, err := cliConf.sftpClient.OpenFile(target.Path, os.O_APPEND|os.O_WRONLY|os.O_CREATE) //远程
 		if err != nil {
@@ -259,17 +246,19 @@ func (cliConf *SftpClient) Put(source, target *File) error {
 		}
 
 		var seek int64 = 0
-		if stat, err := cliConf.sftpClient.Stat(target.Path); !os.IsNotExist(err) {
-			if stat.Size() < source.Size && stat.Size() > 0 {
-				log.Infof("Resume %s from %s", target.Path, ByteCountDecimal(stat.Size()))
-				seek = stat.Size()
-			} else if stat.Size() == source.Size {
-				log.Infof("Skip: %s", target.Path)
-				return nil
-			} else if stat.Size() > source.Size {
-				log.Warnf("%s is corrupted", target.Path)
-				if err := cliConf.sftpClient.Remove(target.Path); err != nil {
-					return fmt.Errorf("failed to remove %s: %s", target.Path, err)
+		if !cliConf.SCP {
+			if stat, err := cliConf.sftpClient.Stat(target.Path); !os.IsNotExist(err) {
+				if stat.Size() < source.Size && stat.Size() > 0 {
+					log.Infof("Resume %s from %s", target.Path, ByteCountDecimal(stat.Size()))
+					seek = stat.Size()
+				} else if stat.Size() == source.Size {
+					log.Infof("Skip: %s", target.Path)
+					return nil
+				} else if stat.Size() > source.Size {
+					log.Warnf("%s is corrupted", target.Path)
+					if err := cliConf.sftpClient.Remove(target.Path); err != nil {
+						return fmt.Errorf("failed to remove %s: %s", target.Path, err)
+					}
 				}
 			}
 		}
@@ -280,11 +269,11 @@ func (cliConf *SftpClient) Put(source, target *File) error {
 		}
 
 		// create proxy reader
-		reader := progressbar.NewReader(srcFile, bar)
-		_, err = io.Copy(dstFile, &reader)
+		reader := bar.ProxyReader(srcFile)
+		_, err = io.Copy(dstFile, reader)
 
 		_ = reader.Close()
-		_ = bar.Finish()
+		//_ = bar.Finish()
 		_ = srcFile.Close()
 		_ = dstFile.Close()
 
@@ -311,22 +300,20 @@ func (cliConf *SftpClient) Pull(source, target *File) error {
 			return fmt.Errorf("failed to open %s: %s", target.Path, err)
 		}
 
-		if cliConf.SCP {
-			return cliConf.scpClient.CopyFromRemote(context.Background(), dstFile, source.Path)
-		}
-
 		var seek int64 = 0
-		if stat, err := os.Stat(target.Path); !os.IsNotExist(err) {
-			if stat.Size() < source.Size && stat.Size() > 0 {
-				log.Infof("Resume %s from %s", target.Path, ByteCountDecimal(stat.Size()))
-				seek = stat.Size()
-			} else if stat.Size() == source.Size {
-				log.Infof("Skip: %s", target.Path)
-				return nil
-			} else if stat.Size() > source.Size {
-				log.Warnf("%s is corrupted", target.Path)
-				if err := os.Remove(target.Path); err != nil {
-					return fmt.Errorf("failed to remove %s: %s", target.Path, err)
+		if !cliConf.SCP {
+			if stat, err := os.Stat(target.Path); !os.IsNotExist(err) {
+				if stat.Size() < source.Size && stat.Size() > 0 {
+					log.Infof("Resume %s from %s", target.Path, ByteCountDecimal(stat.Size()))
+					seek = stat.Size()
+				} else if stat.Size() == source.Size {
+					log.Infof("Skip: %s", target.Path)
+					return nil
+				} else if stat.Size() > source.Size {
+					log.Warnf("%s is corrupted", target.Path)
+					if err := os.Remove(target.Path); err != nil {
+						return fmt.Errorf("failed to remove %s: %s", target.Path, err)
+					}
 				}
 			}
 		}
@@ -338,10 +325,13 @@ func (cliConf *SftpClient) Pull(source, target *File) error {
 		}
 
 		// create proxy reader
-		_, err = io.Copy(io.MultiWriter(dstFile, bar), srcFile)
+		reader := bar.ProxyReader(srcFile)
+		_, err = io.Copy(dstFile, reader)
+		//_, err = io.Copy(io.MultiWriter(dstFile, bar), srcFile)
+		_ = reader.Close()
 		_ = srcFile.Close()
 		_ = dstFile.Close()
-		_ = bar.Finish()
+		//_ = bar.Finish()
 		return err
 	}
 
@@ -357,20 +347,38 @@ func initSftp(opt *options) {
 		opt.Sftp.Path = "./"
 	}
 
-	client := NewSftp(opt.Sftp.Host, opt.Sftp.Proxy, opt.Sftp.Scp)
+	client := NewSftp(opt.Sftp.Host, opt.Sftp.Proxy, opt.Sftp.Scp, opt.Concurrent)
 
+	taskChan := make(chan *File)
+	for i := 0; i < opt.Concurrent; i++ {
+		go func() {
+			for {
+				f, ok := <-taskChan
+
+				if !ok {
+					break
+				}
+
+				if opt.Sftp.Pull {
+					if err := client.Pull(f, f.GetTarget(opt.Sftp.Remote, opt.Sftp.Path)); err != nil {
+						log.Warn(err)
+					}
+				} else {
+					if err := client.Put(f, f.GetTarget(opt.Sftp.Path, opt.Sftp.Remote)); err != nil {
+						log.Warn(err)
+					}
+				}
+			}
+		}()
+	}
+
+	files := make([]*File, 0, 0)
 	if opt.Sftp.Pull {
 		fs, err := ListFilesSftp(client, opt.Sftp.Remote)
 		if err != nil {
 			log.Fatal(err)
 		}
-
-		for i, f := range fs {
-			f.ID = fmt.Sprintf("[%d/%d] %s", i+1, len(fs), f.Name())
-			if err := client.Pull(f, f.GetTarget(opt.Sftp.Remote, opt.Sftp.Path)); err != nil {
-				log.Warn(err)
-			}
-		}
+		files = append(files, fs...)
 	} else {
 		root, err := NewFile(opt.Sftp.Path)
 		if err != nil {
@@ -381,12 +389,15 @@ func initSftp(opt *options) {
 		if err != nil {
 			log.Fatal(err)
 		}
-
-		for i, f := range fs {
-			f.ID = fmt.Sprintf("[%d/%d] %s", i+1, len(fs), f.Name())
-			if err := client.Put(f, f.GetTarget(opt.Sftp.Path, opt.Sftp.Remote)); err != nil {
-				log.Warn(err)
-			}
-		}
+		files = append(files, fs...)
 	}
+
+	for i, f := range files {
+		f.ID = fmt.Sprintf("[%d/%d] %s", i+1, len(files), f.Name())
+		taskChan <- f
+	}
+
+	close(taskChan)
+	defer progress.Wait()
+
 }
