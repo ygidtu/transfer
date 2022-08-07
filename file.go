@@ -37,11 +37,15 @@ func (file *File) CheckParent() error {
 	return fmt.Errorf("do not support check remote parents")
 }
 
-func (file *File) GetTarget(source, target string) *File {
-	path := strings.TrimLeft(file.Path, filepath.Dir(source))
+func (file *File) GetTarget(source, target *File) *File {
+	sourcePath := source.Path
+	if source.IsFile {
+		sourcePath = filepath.Dir(source.Path)
+	}
+	path := strings.TrimLeft(file.Path, sourcePath)
 	path = strings.TrimLeft(path, "/")
 
-	return &File{Path: filepath.Join(target, path), IsLocal: !file.IsLocal, IsFile: file.IsFile}
+	return &File{Path: filepath.Join(target.Path, path), IsLocal: !file.IsLocal, IsFile: file.IsFile}
 }
 
 func NewFile(path string) (*File, error) {
@@ -59,7 +63,7 @@ func ListFilesLocal(file *File) ([]*File, error) {
 		files = append(files, file)
 	} else {
 		log.Infof("List files from %s", file.Path)
-		
+
 		err = filepath.Walk(file.Path, func(p string, info os.FileInfo, err error) error {
 			if SkipHidden && info.Name() != "./" && info.Name() != "." {
 				if strings.HasPrefix(info.Name(), ".") {
@@ -118,19 +122,32 @@ func ListFilesSftp(cliConf *SftpClient, path string) ([]*File, error) {
 func ListFilesFtp(cliConf *FtpClient, path string) ([]*File, error) {
 	var files []*File
 
-	// walk a directory
-	entries, err := cliConf.Client.List(path)
-	if err != nil {
-		return files, err
+	walker := cliConf.Client.Walk(path)
+	if walker.Err() != nil {
+		return files, walker.Err()
 	}
-	for _, e := range entries {
-		if SkipHidden && e.Name != "." && e.Name != "./" && strings.HasPrefix(e.Name, ".") {
-			continue
+
+	if walker.Stat().Type == ftp.EntryTypeFile {
+		f, err := cliConf.NewFile(path)
+		if err != nil {
+			return files, err
 		}
-		if e.Type == ftp.EntryTypeFile {
-			files = append(files, &File{Path: e.Name, Size: int64(e.Size), IsFile: true, IsLocal: false})
-		} else if e.Type == ftp.EntryTypeLink {
-			files = append(files, &File{Path: e.Name, Target: e.Target, Size: int64(e.Size), IsFile: true, IsLocal: false})
+		files = append(files, f)
+	} else if walker.Stat().Type == ftp.EntryTypeFolder {
+		// walk a directory
+		entries, err := cliConf.Client.List(path)
+		if err != nil {
+			return files, err
+		}
+		for _, e := range entries {
+			if SkipHidden && e.Name != "." && e.Name != "./" && strings.HasPrefix(e.Name, ".") {
+				continue
+			}
+			if e.Type == ftp.EntryTypeFile {
+				files = append(files, &File{Path: e.Name, Size: int64(e.Size), IsFile: true, IsLocal: false})
+			} else if e.Type == ftp.EntryTypeLink {
+				files = append(files, &File{Path: e.Name, Target: e.Target, Size: int64(e.Size), IsFile: true, IsLocal: false})
+			}
 		}
 	}
 

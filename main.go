@@ -5,12 +5,16 @@ import (
 	"github.com/voxelbrain/goptions"
 	"go.uber.org/zap"
 	"os"
+	"sync"
 	"time"
 )
 
 var (
 	log        *zap.SugaredLogger
 	progress   *mpb.Progress
+	source     *File
+	target     *File
+	wg         sync.WaitGroup
 	SkipHidden = false
 )
 
@@ -65,6 +69,7 @@ func main() {
 		options.Concurrent = 1
 	}
 
+	wg.Add(options.Concurrent)
 	SkipHidden = options.Skip
 
 	progress = mpb.New(
@@ -85,4 +90,5 @@ func main() {
 	} else {
 		goptions.PrintHelp()
 	}
+	wg.Wait()
 }

@@ -195,6 +195,22 @@ func (cliConf *SftpClient) Exists(path string) bool {
 	return !os.IsNotExist(err)
 }
 
+func (cliConf *SftpClient) NewFile(path string) (*File, error) {
+	if _, err := cliConf.sftpClient.Lstat(path); os.IsNotExist(err) {
+
+		err = cliConf.sftpClient.MkdirAll(path)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	stat, _ := cliConf.sftpClient.Lstat(path)
+	return &File{
+		Path: path, Size: stat.Size(),
+		IsFile: !stat.IsDir(), IsLocal: false,
+	}, nil
+}
+
 // Mkdir as name says
 func (cliConf *SftpClient) Mkdir(path string) error {
 	if !cliConf.Exists(path) {
@@ -352,6 +368,7 @@ func initSftp(opt *options) {
 	taskChan := make(chan *File)
 	for i := 0; i < opt.Concurrent; i++ {
 		go func() {
+			defer wg.Done()
 			for {
 				f, ok := <-taskChan
 
@@ -360,11 +377,11 @@ func initSftp(opt *options) {
 				}
 
 				if opt.Sftp.Pull {
-					if err := client.Pull(f, f.GetTarget(opt.Sftp.Remote, opt.Sftp.Path)); err != nil {
+					if err := client.Pull(f, f.GetTarget(source, target)); err != nil {
 						log.Warn(err)
 					}
 				} else {
-					if err := client.Put(f, f.GetTarget(opt.Sftp.Path, opt.Sftp.Remote)); err != nil {
+					if err := client.Put(f, f.GetTarget(source, target)); err != nil {
 						log.Warn(err)
 					}
 				}
@@ -374,18 +391,37 @@ func initSftp(opt *options) {
 
 	files := make([]*File, 0, 0)
 	if opt.Sftp.Pull {
+		if root, err := NewFile(opt.Sftp.Path); err != nil {
+			log.Fatal(err)
+		} else {
+			target = root
+		}
+
+		if root, err := client.NewFile(opt.Sftp.Remote); err != nil {
+			log.Fatal(err)
+		} else {
+			source = root
+		}
+
 		fs, err := ListFilesSftp(client, opt.Sftp.Remote)
 		if err != nil {
 			log.Fatal(err)
 		}
 		files = append(files, fs...)
 	} else {
-		root, err := NewFile(opt.Sftp.Path)
-		if err != nil {
+		if root, err := NewFile(opt.Sftp.Path); err != nil {
 			log.Fatal(err)
+		} else {
+			source = root
 		}
 
-		fs, err := ListFilesLocal(root)
+		if root, err := client.NewFile(opt.Sftp.Remote); err != nil {
+			log.Fatal(err)
+		} else {
+			target = root
+		}
+
+		fs, err := ListFilesLocal(source)
 		if err != nil {
 			log.Fatal(err)
 		}

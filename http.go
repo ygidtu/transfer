@@ -299,6 +299,7 @@ func initHttp(opt *options) {
 	taskChan := make(chan *File)
 	for i := 0; i < opt.Concurrent; i++ {
 		go func() {
+			defer wg.Done()
 			for {
 				f, ok := <-taskChan
 
@@ -307,13 +308,13 @@ func initHttp(opt *options) {
 				}
 
 				if opt.Trans.Post {
-					target := f.GetTarget(root.Path, "")
+					target := f.GetTarget(source, target)
 					if err := client.Put(f, target); err != nil {
 						log.Warn(err)
 					}
 				} else {
 					f.IsLocal = false
-					if err := client.Pull(f, f.GetTarget("", opt.Trans.Path)); err != nil {
+					if err := client.Pull(f, f.GetTarget(source, target)); err != nil {
 						log.Warn(err)
 					}
 				}
@@ -322,11 +323,13 @@ func initHttp(opt *options) {
 	}
 
 	if opt.Trans.Post {
-		root, err := NewFile(opt.Trans.Path)
-		if err != nil {
+		if root, err := NewFile(opt.Trans.Path); err != nil {
 			log.Fatal(err)
+		} else {
+			source = root
+			target = &File{}
 		}
-		fs, err := ListFilesLocal(root)
+		fs, err := ListFilesLocal(source)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -341,6 +344,14 @@ func initHttp(opt *options) {
 				log.Fatal(err)
 			}
 		}
+
+		if root, err := NewFile(opt.Trans.Path); err != nil {
+			log.Fatal(err)
+		} else {
+			target = root
+			source = &File{}
+		}
+
 		fs, err := client.Get()
 		if err != nil {
 			log.Fatalf("failed to get list of file: %v", err)
@@ -354,6 +365,4 @@ func initHttp(opt *options) {
 	}
 
 	close(taskChan)
-	defer progress.Wait()
-	return
 }

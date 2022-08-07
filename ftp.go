@@ -42,6 +42,26 @@ func NewFtp(host string) *FtpClient {
 	return cfg
 }
 
+func (fc *FtpClient) NewFile(path string) (*File, error) {
+	walker := fc.Client.Walk(path)
+
+	if os.IsNotExist(walker.Err()) {
+		if err := fc.Client.MakeDir(path); err != nil {
+			return nil, err
+		}
+	}
+
+	walker = fc.Client.Walk(path)
+	if walker.Err() != nil {
+		return nil, walker.Err()
+	}
+
+	return &File{
+		Path: path, Size: int64(walker.Stat().Size),
+		IsFile: walker.Stat().Type == ftp.EntryTypeFile, IsLocal: false,
+	}, nil
+}
+
 func (fc *FtpClient) Put(source, target *File) error {
 	if source.IsLocal && !target.IsLocal {
 
@@ -183,6 +203,7 @@ func initFtp(opt *options) {
 
 	for i := 0; i < opt.Concurrent; i++ {
 		go func() {
+			defer wg.Done()
 			for {
 				f, ok := <-taskChan
 
@@ -191,11 +212,35 @@ func initFtp(opt *options) {
 				}
 
 				if opt.Ftp.Pull {
-					if err := client.Pull(f, f.GetTarget(opt.Ftp.Remote, opt.Ftp.Path)); err != nil {
+					if root, err := NewFile(opt.Ftp.Path); err != nil {
+						log.Fatal(err)
+					} else {
+						target = root
+					}
+
+					if root, err := client.NewFile(opt.Ftp.Remote); err != nil {
+						log.Fatal(err)
+					} else {
+						source = root
+					}
+
+					if err := client.Pull(f, f.GetTarget(source, target)); err != nil {
 						log.Warn(err)
 					}
 				} else {
-					if err := client.Put(f, f.GetTarget(opt.Ftp.Path, opt.Ftp.Remote)); err != nil {
+					if root, err := NewFile(opt.Ftp.Path); err != nil {
+						log.Fatal(err)
+					} else {
+						source = root
+					}
+
+					if root, err := client.NewFile(opt.Ftp.Remote); err != nil {
+						log.Fatal(err)
+					} else {
+						target = root
+					}
+
+					if err := client.Put(f, f.GetTarget(source, target)); err != nil {
 						log.Warn(err)
 					}
 				}
@@ -204,5 +249,4 @@ func initFtp(opt *options) {
 	}
 
 	close(taskChan)
-	defer progress.Wait()
 }

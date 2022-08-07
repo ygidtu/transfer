@@ -16,9 +16,22 @@ func initCopy(opt *options) {
 		log.Fatal(err)
 	}
 
+	if root, err := NewFile(opt.Copy.Path); err != nil {
+		log.Fatal(err)
+	} else {
+		source = root
+	}
+
+	if root, err := NewFile(opt.Copy.Remote); err != nil {
+		log.Fatal(err)
+	} else {
+		target = root
+	}
+
 	taskChan := make(chan *File)
 	for i := 0; i < opt.Concurrent; i++ {
 		go func() {
+			defer wg.Done()
 			for {
 				f, ok := <-taskChan
 
@@ -26,7 +39,7 @@ func initCopy(opt *options) {
 					break
 				}
 
-				target := f.GetTarget(opt.Copy.Path, opt.Copy.Remote)
+				target := f.GetTarget(source, target)
 				target.IsLocal = true
 				if err := target.CheckParent(); err != nil {
 					log.Fatal(err)
