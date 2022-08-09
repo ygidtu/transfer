@@ -169,11 +169,13 @@ func (hc *HTTPClient) Put(source *File, target *File) error {
 
 		if start == total {
 			log.Infof("Skip: %s", source.Path)
+			_ = bar.Add64(total)
 			return nil
 		} else if start > 0 {
 			log.Infof("Resume from: %s", ByteCountDecimal(start))
 		}
 
+		bar.Describe(source.ID)
 		// save to file
 		f, err := os.Open(source.Path)
 		if err != nil {
@@ -181,10 +183,7 @@ func (hc *HTTPClient) Put(source *File, target *File) error {
 		}
 		_, _ = f.Seek(start, 0)
 
-		bar := BytesBar(total-start, source.ID)
-		reader := bar.ProxyReader(f)
-
-		req, err := http.NewRequest(http.MethodPost, u, reader)
+		req, err := http.NewRequest(http.MethodPost, u, io.MultiReader(f, bar))
 		if err != nil {
 			return err
 		}
@@ -203,9 +202,9 @@ func (hc *HTTPClient) Put(source *File, target *File) error {
 			return fmt.Errorf("%s: %v", string(body), err)
 		}
 
-		_ = reader.Close()
 		_ = resp.Body.Close()
 		_ = f.Close()
+		_ = bar.Finish()
 		return nil
 	}
 	return fmt.Errorf("soure file [%v] should be local, target file [%v] should be remote", source, target)
@@ -230,7 +229,8 @@ func (hc *HTTPClient) Pull(source *File, target *File) error {
 
 		if stat, err := os.Stat(target.Path); !os.IsNotExist(err) {
 			if stat.Size() == source.Size {
-				log.Infof("%s: skip", source.ID)
+				log.Infof("Skip: %s", source.ID)
+				_ = bar.Add64(source.Size)
 				return req.Body.Close()
 			} else if stat.Size() > source.Size {
 				log.Warnf("%v size [%v] > remote [%v], redownload", target.Path, stat.Size(), source.Size)
@@ -250,14 +250,13 @@ func (hc *HTTPClient) Pull(source *File, target *File) error {
 			return fmt.Errorf("failed to open %s: %v", target.Path, err)
 		}
 		w := bufio.NewWriter(f)
-		bar := BytesBar(req.Size, source.ID)
-		reader := bar.ProxyReader(req.Body)
-		_, err = io.Copy(w, reader)
+
 		if err != nil {
 			return fmt.Errorf("failed to copy %s: %v", target.Path, err)
 		}
 
-		_ = reader.Close()
+		err = Copy(req.Body, w)
+		_ = req.Body.Close()
 		_ = w.Flush()
 		_ = f.Close()
 
@@ -298,6 +297,7 @@ func initHttp(opt *options) {
 
 	taskChan := make(chan *File)
 	for i := 0; i < opt.Concurrent; i++ {
+		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			for {

@@ -38,7 +38,7 @@ func init() {
 
 	core := zapcore.NewCore(
 		zapcore.NewConsoleEncoder(encoder),
-		zapcore.AddSync(os.Stderr),
+		zapcore.AddSync(os.Stdout),
 		level,
 	)
 

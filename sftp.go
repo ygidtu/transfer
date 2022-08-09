@@ -5,7 +5,6 @@ import (
 	"github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
 	px "golang.org/x/net/proxy"
-	"io"
 	"io/ioutil"
 	"net"
 	"os"
@@ -269,6 +268,7 @@ func (cliConf *SftpClient) Put(source, target *File) error {
 					seek = stat.Size()
 				} else if stat.Size() == source.Size {
 					log.Infof("Skip: %s", target.Path)
+					_ = bar.Add64(source.Size)
 					return nil
 				} else if stat.Size() > source.Size {
 					log.Warnf("%s is corrupted", target.Path)
@@ -279,17 +279,15 @@ func (cliConf *SftpClient) Put(source, target *File) error {
 			}
 		}
 
-		bar := BytesBar(source.Size-seek, source.ID)
+		_ = bar.Add64(seek)
+		bar.Describe(source.ID)
+
 		if _, err := srcFile.Seek(seek, 0); err != nil {
 			return err
 		}
 
 		// create proxy reader
-		reader := bar.ProxyReader(srcFile)
-		_, err = io.Copy(dstFile, reader)
-
-		_ = reader.Close()
-		//_ = bar.Finish()
+		err = Copy(srcFile, dstFile)
 		_ = srcFile.Close()
 		_ = dstFile.Close()
 
@@ -324,6 +322,7 @@ func (cliConf *SftpClient) Pull(source, target *File) error {
 					seek = stat.Size()
 				} else if stat.Size() == source.Size {
 					log.Infof("Skip: %s", target.Path)
+					_ = bar.Add64(source.Size)
 					return nil
 				} else if stat.Size() > source.Size {
 					log.Warnf("%s is corrupted", target.Path)
@@ -334,20 +333,16 @@ func (cliConf *SftpClient) Pull(source, target *File) error {
 			}
 		}
 
-		bar := BytesBar(source.Size-seek, source.ID)
+		_ = bar.Add64(seek)
 
 		if _, err := srcFile.Seek(seek, 0); err != nil {
 			return err
 		}
-
-		// create proxy reader
-		reader := bar.ProxyReader(srcFile)
-		_, err = io.Copy(dstFile, reader)
-		//_, err = io.Copy(io.MultiWriter(dstFile, bar), srcFile)
-		_ = reader.Close()
+		bar.Describe(source.ID)
+		err = Copy(srcFile, dstFile)
 		_ = srcFile.Close()
 		_ = dstFile.Close()
-		//_ = bar.Finish()
+
 		return err
 	}
 
@@ -367,6 +362,7 @@ func initSftp(opt *options) {
 
 	taskChan := make(chan *File)
 	for i := 0; i < opt.Concurrent; i++ {
+		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			for {
@@ -434,6 +430,5 @@ func initSftp(opt *options) {
 	}
 
 	close(taskChan)
-	defer progress.Wait()
 
 }

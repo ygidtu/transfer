@@ -81,7 +81,7 @@ func (fc *FtpClient) Put(source, target *File) error {
 			}
 		}
 
-		bar := BytesBar(source.Size, source.ID)
+		bar.Describe(source.ID)
 		r, err := os.Open(source.Path)
 		if err != nil {
 			return fmt.Errorf("failed to open local file %s: %v", source.Path, err)
@@ -92,16 +92,19 @@ func (fc *FtpClient) Put(source, target *File) error {
 			if _, err := r.Seek(offset, 0); err != nil {
 				return fmt.Errorf("failed to seek %s: %v", source.Path, err)
 			}
+		} else if source.Size == offset {
+			log.Infof("Skip: %s", source.Path)
+			_ = bar.Add64(offset)
+			return nil
 		} else {
 			log.Infof("%s -> %s", source.Path, target.Path)
 		}
 
-		reader := bar.ProxyReader(r)
-		err = fc.Client.StorFrom(target.Path, reader, uint64(offset))
+		err = fc.Client.StorFrom(target.Path, io.MultiReader(r, bar), uint64(offset))
 		if err != nil {
 			log.Warnf("failed to put file to remote: %v", err)
 		}
-		_ = reader.Close()
+		_ = bar.Finish()
 		_ = r.Close()
 		return nil
 	}
@@ -135,6 +138,10 @@ func (fc *FtpClient) Pull(source, target *File) error {
 
 		if source.Size > size {
 			log.Infof("%s <- %s [restore from: %s]", target.Path, source.Path, ByteCountDecimal(size))
+		} else if source.Size == size {
+			_ = bar.Add64(source.Size)
+			log.Infof("Skip: %s", source.Path)
+			return nil
 		} else {
 			log.Infof("%s <- %s", target.Path, source.Path)
 		}
@@ -144,15 +151,14 @@ func (fc *FtpClient) Pull(source, target *File) error {
 			log.Warnf("failed to open file %s from remote: %v", source.Path, err)
 		}
 
-		bar := BytesBar(size, source.ID)
-		reader := bar.ProxyReader(resp)
-		if _, err = io.Copy(w, reader); err != nil {
+		bar.Describe(source.ID)
+		if _, err = io.Copy(io.MultiWriter(w, bar), resp); err != nil {
 			log.Warnf("failed to get file from remote: %v", err)
 		}
 
-		_ = reader.Close()
 		_ = resp.Close()
 		_ = w.Close()
+		_ = bar.Finish()
 		return nil
 	}
 
@@ -202,6 +208,7 @@ func initFtp(opt *options) {
 	taskChan := make(chan *File)
 
 	for i := 0; i < opt.Concurrent; i++ {
+		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			for {

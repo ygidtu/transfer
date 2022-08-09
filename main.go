@@ -1,21 +1,21 @@
 package main
 
 import (
-	"github.com/vbauerster/mpb/v7"
+	"github.com/schollz/progressbar/v3"
 	"github.com/voxelbrain/goptions"
 	"go.uber.org/zap"
 	"os"
 	"sync"
-	"time"
 )
 
 var (
 	log        *zap.SugaredLogger
-	progress   *mpb.Progress
 	source     *File
 	target     *File
 	wg         sync.WaitGroup
+	bar        *progressbar.ProgressBar
 	SkipHidden = false
+	finished   int64
 )
 
 // command line parameters
@@ -61,7 +61,7 @@ func main() {
 	goptions.ParseAndFail(&options)
 
 	if options.Version {
-		log.Info("Current version: v0.0.4")
+		log.Info("Current version: v0.0.5")
 		os.Exit(0)
 	}
 
@@ -69,12 +69,7 @@ func main() {
 		options.Concurrent = 1
 	}
 
-	wg.Add(options.Concurrent)
 	SkipHidden = options.Skip
-
-	progress = mpb.New(
-		mpb.WithWidth(60),
-		mpb.WithRefreshRate(180*time.Millisecond))
 
 	if options.Verbs == "server" {
 		initServer(&options)
@@ -91,4 +86,8 @@ func main() {
 		goptions.PrintHelp()
 	}
 	wg.Wait()
+
+	if bar != nil && !bar.IsFinished() {
+		_ = bar.Finish()
+	}
 }

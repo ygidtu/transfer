@@ -2,9 +2,35 @@ package main
 
 import (
 	"fmt"
-	"github.com/vbauerster/mpb/v7"
-	"github.com/vbauerster/mpb/v7/decor"
+	"github.com/schollz/progressbar/v3"
+	"io"
+	"os"
+	"time"
 )
+
+func Copy(reader io.Reader, writer io.Writer) error {
+	var err error
+	for {
+		byteBuff := make([]byte, 1024*32)
+		_, er := reader.Read(byteBuff)
+		if er != nil {
+			if er == io.EOF {
+				break
+			} else {
+				err = er
+				break
+			}
+		}
+
+		_ = bar.Add(len(byteBuff))
+		_, err = writer.Write(byteBuff)
+
+		if err != nil {
+			break
+		}
+	}
+	return err
+}
 
 // ByteCountDecimal human-readable file size
 func ByteCountDecimal(b int64) string {
@@ -20,27 +46,31 @@ func ByteCountDecimal(b int64) string {
 	return fmt.Sprintf("%.1f %cB", float64(b)/float64(div), "kMGTPE"[exp])
 }
 
-func BytesBar(size int64, name string) *mpb.Bar {
+func BytesBar(size int64, name string) *progressbar.ProgressBar {
 
 	if len(name) > 50 {
 		name = fmt.Sprintf("%s...", name[0:51])
 	}
 
-	return progress.New(
-		size,
-		mpb.BarStyle().Lbound("╢").Filler("▌").Tip("▌").Padding("░").Rbound("╟"),
-		// override default "[=>-]" style
-		mpb.PrependDecorators(
-			// display our name with one space on the right
-			decor.Name(name, decor.WC{W: len(name) + 1, C: decor.DidentRight}),
-		),
-		mpb.AppendDecorators(
-			decor.AverageETA(decor.ET_STYLE_GO),
-			decor.Name(" "),
-			decor.AverageSpeed(decor.UnitKB, "% .2f"),
-			decor.Name(" ["),
-			decor.CountersKibiByte("% .2f / % .2f"),
-			decor.Name(" ]"),
-		),
-	)
+	return progressbar.NewOptions(int(size),
+		progressbar.OptionSetWriter(os.Stderr),
+		progressbar.OptionEnableColorCodes(true),
+		progressbar.OptionShowBytes(true),
+		progressbar.OptionSetDescription(name),
+		progressbar.OptionFullWidth(),
+		progressbar.OptionThrottle(65*time.Millisecond),
+		progressbar.OptionSetRenderBlankState(true),
+		progressbar.OptionSpinnerType(14),
+		progressbar.OptionShowCount(),
+		progressbar.OptionOnCompletion(func() {
+			fmt.Fprint(os.Stderr, "\n")
+		}),
+		progressbar.OptionSetWidth(10),
+		progressbar.OptionSetTheme(progressbar.Theme{
+			Saucer:        "[green]=[reset]",
+			SaucerHead:    "[green]>[reset]",
+			SaucerPadding: " ",
+			BarStart:      "[",
+			BarEnd:        "]",
+		}))
 }

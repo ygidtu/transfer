@@ -59,8 +59,10 @@ func NewFile(path string) (*File, error) {
 func ListFilesLocal(file *File) ([]*File, error) {
 	var files []*File
 	var err error
+	var total int64
 	if file.IsFile {
 		files = append(files, file)
+		total += file.Size
 	} else {
 		log.Infof("List files from %s", file.Path)
 
@@ -79,18 +81,21 @@ func ListFilesLocal(file *File) ([]*File, error) {
 					Size:    info.Size(),
 					IsFile:  !info.IsDir(),
 					IsLocal: true})
+
+				total += info.Size()
 			}
 			return nil
 		})
 	}
 
+	bar = BytesBar(total, "Local")
 	return files, err
 }
 
 // ListFilesSftp as name says collect files
 func ListFilesSftp(cliConf *SftpClient, path string) ([]*File, error) {
 	var files []*File
-
+	var total int64
 	// walk a directory
 	if stat, err := cliConf.sftpClient.Stat(path); os.IsNotExist(err) {
 		return files, fmt.Errorf("%s not exists: %v", path, err)
@@ -109,19 +114,22 @@ func ListFilesSftp(cliConf *SftpClient, path string) ([]*File, error) {
 
 			if !w.Stat().IsDir() {
 				files = append(files, &File{Path: w.Path(), Size: w.Stat().Size(), IsFile: true, IsLocal: false})
+				total += w.Stat().Size()
 			}
 		}
 	} else {
 		files = append(files, &File{Path: path, Size: stat.Size(), IsFile: true, IsLocal: false})
+		total += stat.Size()
 	}
 
+	bar = BytesBar(total, "Sftp")
 	return files, nil
 }
 
 // ListFilesFtp as name says collect files
 func ListFilesFtp(cliConf *FtpClient, path string) ([]*File, error) {
 	var files []*File
-
+	var total int64
 	walker := cliConf.Client.Walk(path)
 	if walker.Err() != nil {
 		return files, walker.Err()
@@ -133,6 +141,7 @@ func ListFilesFtp(cliConf *FtpClient, path string) ([]*File, error) {
 			return files, err
 		}
 		files = append(files, f)
+		total += f.Size
 	} else if walker.Stat().Type == ftp.EntryTypeFolder {
 		// walk a directory
 		entries, err := cliConf.Client.List(path)
@@ -145,11 +154,13 @@ func ListFilesFtp(cliConf *FtpClient, path string) ([]*File, error) {
 			}
 			if e.Type == ftp.EntryTypeFile {
 				files = append(files, &File{Path: e.Name, Size: int64(e.Size), IsFile: true, IsLocal: false})
+				total += int64(e.Size)
 			} else if e.Type == ftp.EntryTypeLink {
 				files = append(files, &File{Path: e.Name, Target: e.Target, Size: int64(e.Size), IsFile: true, IsLocal: false})
+				total += int64(e.Size)
 			}
 		}
 	}
-
+	bar = BytesBar(total, "Ftp")
 	return files, nil
 }

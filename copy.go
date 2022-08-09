@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"io"
 	"os"
 )
 
@@ -30,6 +29,7 @@ func initCopy(opt *options) {
 
 	taskChan := make(chan *File)
 	for i := 0; i < opt.Concurrent; i++ {
+		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			for {
@@ -50,7 +50,8 @@ func initCopy(opt *options) {
 				}
 
 				if target.Size == f.Size {
-					log.Infof("skip: %s", f.Path)
+					log.Infof("Skip: %s", f.Path)
+					_ = bar.Add64(f.Size)
 					return
 				} else if target.Size > f.Size {
 					log.Warnf("%s is corrupted", target.Path)
@@ -75,18 +76,16 @@ func initCopy(opt *options) {
 					return
 				}
 
-				bar := BytesBar(f.Size-target.Size, f.ID)
+				_ = bar.Add64(target.Size)
+
 				if _, err := r.Seek(target.Size, 0); err != nil {
 					log.Warnf("failed to seek %s: %v", f.Path, err)
 					_ = r.Close()
 					_ = w.Close()
 					return
 				}
-
-				// create proxy reader
-				reader := bar.ProxyReader(r)
-				_, err = io.Copy(w, reader)
-				_ = reader.Close()
+				bar.Describe(source.ID)
+				err = Copy(r, w)
 				_ = w.Close()
 				_ = r.Close()
 			}
@@ -100,5 +99,4 @@ func initCopy(opt *options) {
 	}
 
 	close(taskChan)
-	defer progress.Wait()
 }
