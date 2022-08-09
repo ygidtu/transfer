@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"github.com/jlaffaye/ftp"
+	"github.com/schollz/progressbar/v3"
 	"io"
 	"os"
 	"path/filepath"
@@ -100,11 +101,12 @@ func (fc *FtpClient) Put(source, target *File) error {
 			log.Infof("%s -> %s", source.Path, target.Path)
 		}
 
-		err = fc.Client.StorFrom(target.Path, io.MultiReader(r, bar), uint64(offset))
+		reader := progressbar.NewReader(r, bar)
+		err = fc.Client.StorFrom(target.Path, &reader, uint64(offset))
 		if err != nil {
 			log.Warnf("failed to put file to remote: %v", err)
 		}
-		_ = bar.Finish()
+		_ = reader.Close()
 		_ = r.Close()
 		return nil
 	}
@@ -130,7 +132,6 @@ func (fc *FtpClient) Pull(source, target *File) error {
 			}
 		}
 
-		//bar := BytesBar(f.Size, filepath.Base(f.Path))
 		w, err := os.OpenFile(target.Path, os.O_APPEND|os.O_WRONLY|os.O_CREATE, os.ModePerm)
 		if err != nil {
 			return fmt.Errorf("failed to open local file %s: %v", target.Path, err)
@@ -158,7 +159,6 @@ func (fc *FtpClient) Pull(source, target *File) error {
 
 		_ = resp.Close()
 		_ = w.Close()
-		_ = bar.Finish()
 		return nil
 	}
 

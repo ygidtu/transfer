@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"github.com/schollz/progressbar/v3"
 	"io"
 	"io/ioutil"
 	"net/http"
@@ -182,8 +183,8 @@ func (hc *HTTPClient) Put(source *File, target *File) error {
 			return fmt.Errorf("failed to open %s: %v", source.Path, err)
 		}
 		_, _ = f.Seek(start, 0)
-
-		req, err := http.NewRequest(http.MethodPost, u, io.MultiReader(f, bar))
+		reader := progressbar.NewReader(f, bar)
+		req, err := http.NewRequest(http.MethodPost, u, &reader)
 		if err != nil {
 			return err
 		}
@@ -202,9 +203,9 @@ func (hc *HTTPClient) Put(source *File, target *File) error {
 			return fmt.Errorf("%s: %v", string(body), err)
 		}
 
+		_ = reader.Close()
 		_ = resp.Body.Close()
 		_ = f.Close()
-		_ = bar.Finish()
 		return nil
 	}
 	return fmt.Errorf("soure file [%v] should be local, target file [%v] should be remote", source, target)
@@ -255,7 +256,7 @@ func (hc *HTTPClient) Pull(source *File, target *File) error {
 			return fmt.Errorf("failed to copy %s: %v", target.Path, err)
 		}
 
-		err = Copy(req.Body, w)
+		_, err = io.Copy(io.MultiWriter(w, bar), req.Body)
 		_ = req.Body.Close()
 		_ = w.Flush()
 		_ = f.Close()

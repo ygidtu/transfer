@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os"
 )
 
@@ -85,7 +86,7 @@ func initCopy(opt *options) {
 					return
 				}
 				bar.Describe(source.ID)
-				err = Copy(r, w)
+				_, err = io.Copy(io.MultiWriter(w, bar), r)
 				_ = w.Close()
 				_ = r.Close()
 			}

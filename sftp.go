@@ -5,6 +5,7 @@ import (
 	"github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
 	px "golang.org/x/net/proxy"
+	"io"
 	"io/ioutil"
 	"net"
 	"os"
@@ -254,12 +255,6 @@ func (cliConf *SftpClient) Put(source, target *File) error {
 			return fmt.Errorf("failed to open file %s: %v", source.Path, err)
 		}
 
-		// append file
-		dstFile, err := cliConf.sftpClient.OpenFile(target.Path, os.O_APPEND|os.O_WRONLY|os.O_CREATE) //远程
-		if err != nil {
-			return fmt.Errorf("failed to open %s on server: %s", target.Path, err)
-		}
-
 		var seek int64 = 0
 		if !cliConf.SCP {
 			if stat, err := cliConf.sftpClient.Stat(target.Path); !os.IsNotExist(err) {
@@ -279,6 +274,12 @@ func (cliConf *SftpClient) Put(source, target *File) error {
 			}
 		}
 
+		// append file
+		dstFile, err := cliConf.sftpClient.OpenFile(target.Path, os.O_APPEND|os.O_WRONLY|os.O_CREATE) //远程
+		if err != nil {
+			return fmt.Errorf("failed to open %s on server: %s", target.Path, err)
+		}
+
 		_ = bar.Add64(seek)
 		bar.Describe(source.ID)
 
@@ -287,7 +288,7 @@ func (cliConf *SftpClient) Put(source, target *File) error {
 		}
 
 		// create proxy reader
-		err = Copy(srcFile, dstFile)
+		_, err = io.Copy(io.MultiWriter(bar, dstFile), srcFile)
 		_ = srcFile.Close()
 		_ = dstFile.Close()
 
@@ -339,7 +340,7 @@ func (cliConf *SftpClient) Pull(source, target *File) error {
 			return err
 		}
 		bar.Describe(source.ID)
-		err = Copy(srcFile, dstFile)
+		_, err = io.Copy(io.MultiWriter(bar, dstFile), srcFile)
 		_ = srcFile.Close()
 		_ = dstFile.Close()
 

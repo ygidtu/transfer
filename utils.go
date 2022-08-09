@@ -3,34 +3,9 @@ package main
 import (
 	"fmt"
 	"github.com/schollz/progressbar/v3"
-	"io"
 	"os"
 	"time"
 )
-
-func Copy(reader io.Reader, writer io.Writer) error {
-	var err error
-	for {
-		byteBuff := make([]byte, 1024*32)
-		_, er := reader.Read(byteBuff)
-		if er != nil {
-			if er == io.EOF {
-				break
-			} else {
-				err = er
-				break
-			}
-		}
-
-		_ = bar.Add(len(byteBuff))
-		_, err = writer.Write(byteBuff)
-
-		if err != nil {
-			break
-		}
-	}
-	return err
-}
 
 // ByteCountDecimal human-readable file size
 func ByteCountDecimal(b int64) string {
