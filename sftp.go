@@ -259,10 +259,10 @@ func (cliConf *SftpClient) Put(source, target *File) error {
 		if !cliConf.SCP {
 			if stat, err := cliConf.sftpClient.Stat(target.Path); !os.IsNotExist(err) {
 				if stat.Size() < source.Size && stat.Size() > 0 {
-					log.Infof("Resume %s from %s", target.Path, ByteCountDecimal(stat.Size()))
+					log.Debugf("Resume %s from %s", target.Path, ByteCountDecimal(stat.Size()))
 					seek = stat.Size()
 				} else if stat.Size() == source.Size {
-					log.Infof("Skip: %s", target.Path)
+					log.Debugf("Skip: %s", target.Path)
 					_ = bar.Add64(source.Size)
 					return nil
 				} else if stat.Size() > source.Size {
@@ -281,7 +281,6 @@ func (cliConf *SftpClient) Put(source, target *File) error {
 		}
 
 		_ = bar.Add64(seek)
-		bar.Describe(source.ID)
 
 		if _, err := srcFile.Seek(seek, 0); err != nil {
 			return err
@@ -339,7 +338,6 @@ func (cliConf *SftpClient) Pull(source, target *File) error {
 		if _, err := srcFile.Seek(seek, 0); err != nil {
 			return err
 		}
-		bar.Describe(source.ID)
 		_, err = io.Copy(io.MultiWriter(bar, dstFile), srcFile)
 		_ = srcFile.Close()
 		_ = dstFile.Close()
@@ -372,6 +370,7 @@ func initSftp(opt *options) {
 				if !ok {
 					break
 				}
+				bar.Describe(f.ID)
 
 				if opt.Sftp.Pull {
 					if err := client.Pull(f, f.GetTarget(source, target)); err != nil {

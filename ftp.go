@@ -65,7 +65,6 @@ func (fc *FtpClient) NewFile(path string) (*File, error) {
 
 func (fc *FtpClient) Put(source, target *File) error {
 	if source.IsLocal && !target.IsLocal {
-
 		if err := fc.Mkdir(filepath.Dir(target.Path)); err != nil {
 			return fmt.Errorf("failed to mkdir %s at remote: %v", filepath.Dir(target.Path), err)
 		}
@@ -82,25 +81,21 @@ func (fc *FtpClient) Put(source, target *File) error {
 			}
 		}
 
-		bar.Describe(source.ID)
 		r, err := os.Open(source.Path)
 		if err != nil {
 			return fmt.Errorf("failed to open local file %s: %v", source.Path, err)
 		}
 
 		if offset > 0 {
-			log.Infof("%s -> %s [restore from: %s]", source.Path, target.Path, ByteCountDecimal(offset))
+			log.Debugf("%s -> %s [restore from: %s]", source.Path, target.Path, ByteCountDecimal(offset))
 			if _, err := r.Seek(offset, 0); err != nil {
 				return fmt.Errorf("failed to seek %s: %v", source.Path, err)
 			}
 		} else if source.Size == offset {
-			log.Infof("Skip: %s", source.Path)
+			log.Debugf("Skip: %s", source.Path)
 			_ = bar.Add64(offset)
 			return nil
-		} else {
-			log.Infof("%s -> %s", source.Path, target.Path)
 		}
-
 		reader := progressbar.NewReader(r, bar)
 		err = fc.Client.StorFrom(target.Path, &reader, uint64(offset))
 		if err != nil {
@@ -138,13 +133,11 @@ func (fc *FtpClient) Pull(source, target *File) error {
 		}
 
 		if source.Size > size {
-			log.Infof("%s <- %s [restore from: %s]", target.Path, source.Path, ByteCountDecimal(size))
+			log.Debugf("%s <- %s [restore from: %s]", target.Path, source.Path, ByteCountDecimal(size))
 		} else if source.Size == size {
 			_ = bar.Add64(source.Size)
-			log.Infof("Skip: %s", source.Path)
+			log.Debugf("Skip: %s", source.Path)
 			return nil
-		} else {
-			log.Infof("%s <- %s", target.Path, source.Path)
 		}
 
 		resp, err := fc.Client.RetrFrom(source.Path, uint64(size))
@@ -152,7 +145,6 @@ func (fc *FtpClient) Pull(source, target *File) error {
 			log.Warnf("failed to open file %s from remote: %v", source.Path, err)
 		}
 
-		bar.Describe(source.ID)
 		if _, err = io.Copy(io.MultiWriter(w, bar), resp); err != nil {
 			log.Warnf("failed to get file from remote: %v", err)
 		}
@@ -217,6 +209,7 @@ func initFtp(opt *options) {
 				if !ok {
 					break
 				}
+				bar.Describe(f.ID)
 
 				if opt.Ftp.Pull {
 					if root, err := NewFile(opt.Ftp.Path); err != nil {

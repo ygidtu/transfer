@@ -60,7 +60,7 @@ func main() {
 	goptions.ParseAndFail(&options)
 
 	if options.Version {
-		log.Info("Current version: v0.0.5")
+		log.Info("Current version: v0.0.6")
 		os.Exit(0)
 	}
 

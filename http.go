@@ -178,14 +178,13 @@ func (hc *HTTPClient) Put(source *File, target *File) error {
 		total = source.Size
 
 		if start == total {
-			log.Infof("Skip: %s", source.Path)
+			log.Debugf("Skip: %s", source.Path)
 			_ = bar.Add64(total)
 			return nil
 		} else if start > 0 {
-			log.Infof("Resume from: %s", ByteCountDecimal(start))
+			log.Debugf("Resume from: %s", ByteCountDecimal(start))
 		}
 
-		bar.Describe(source.ID)
 		// save to file
 		f, err := os.Open(source.Path)
 		if err != nil {
@@ -202,18 +201,12 @@ func (hc *HTTPClient) Put(source *File, target *File) error {
 		if hc.Transport != nil {
 			client.Transport = hc.Transport
 		}
-		resp, err = client.Do(req)
+		_, err = client.Do(req)
 		if err != nil {
 			return fmt.Errorf("failed to create post client: %v", err)
 		}
 
-		body, err := ioutil.ReadAll(resp.Body)
-		if err != nil {
-			return fmt.Errorf("%s: %v", string(body), err)
-		}
-
 		_ = reader.Close()
-		_ = resp.Body.Close()
 		_ = f.Close()
 		return nil
 	}
@@ -239,22 +232,20 @@ func (hc *HTTPClient) Pull(source *File, target *File) error {
 
 		if stat, err := os.Stat(target.Path); !os.IsNotExist(err) {
 			if stat.Size() == source.Size {
-				log.Infof("Skip: %s", source.ID)
+				log.Debugf("Skip: %s", source.ID)
 				_ = bar.Add64(source.Size)
 				return req.Body.Close()
 			} else if stat.Size() > source.Size {
 				log.Warnf("%v size [%v] > remote [%v], redownload", target.Path, stat.Size(), source.Size)
 				_ = os.Remove(target.Path)
 			} else {
-				log.Infof("Resume from %s", ByteCountDecimal(stat.Size()))
+				log.Debugf("Resume from %s", ByteCountDecimal(stat.Size()))
 				err = hc.Seek(req, stat.Size())
 				if err != nil {
 					log.Error(err)
 				}
 			}
 		}
-
-		bar.Describe(source.ID)
 
 		// save to file
 		f, err := os.OpenFile(target.Path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, os.ModePerm)
@@ -318,6 +309,7 @@ func initHttp(opt *options) {
 				if !ok {
 					break
 				}
+				bar.Describe(f.ID)
 
 				if opt.Trans.Post {
 					if err := client.Put(f, f.GetTarget(source, target)); err != nil {

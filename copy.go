@@ -46,20 +46,20 @@ func initCopy(opt *options) {
 				if !ok {
 					break
 				}
+				bar.Describe(f.ID)
 
 				target := f.GetTarget(source, target)
 				target.IsLocal = true
 				if err := target.CheckParent(); err != nil {
 					log.Fatal(err)
 				}
-				bar.Describe(f.ID)
 
 				if stat, err := os.Stat(target.Path); !os.IsNotExist(err) {
 					target.Size = stat.Size()
 				}
 
 				if target.Size == f.Size {
-					log.Infof("Skip: %s", f.Path)
+					log.Debugf("Skip: %s", f.Path)
 					_ = bar.Add64(f.Size)
 					continue
 				} else if target.Size > f.Size {
