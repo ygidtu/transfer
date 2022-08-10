@@ -101,7 +101,10 @@ func (hc *HTTPClient) Seek(u *Url, pos int64) error {
 		return err
 	}
 
-	client := &http.Client{Transport: hc.Transport}
+	client := &http.Client{}
+	if hc.Transport != nil {
+		client.Transport = hc.Transport
+	}
 
 	req.Header.Set("Range", fmt.Sprintf("bytes=%d-", pos))
 
@@ -122,13 +125,19 @@ func (hc *HTTPClient) Get() ([]*File, error) {
 	if err != nil {
 		return files, err
 	}
-	log.Infof("%v", u)
 	content, err := ioutil.ReadAll(u.Body)
 	if err != nil {
 		return files, err
 	}
 
 	err = json.Unmarshal(content, &files)
+
+	var total int64
+	for _, f := range files {
+		total += f.Size
+	}
+
+	bar = BytesBar(total, "HTTP client")
 
 	return files, err
 }
@@ -244,6 +253,8 @@ func (hc *HTTPClient) Pull(source *File, target *File) error {
 				}
 			}
 		}
+
+		bar.Describe(source.ID)
 
 		// save to file
 		f, err := os.OpenFile(target.Path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, os.ModePerm)

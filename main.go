@@ -15,7 +15,6 @@ var (
 	wg         sync.WaitGroup
 	bar        *progressbar.ProgressBar
 	SkipHidden = false
-	finished   int64
 )
 
 // command line parameters

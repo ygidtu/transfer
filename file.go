@@ -92,6 +92,41 @@ func ListFilesLocal(file *File) ([]*File, error) {
 	return files, err
 }
 
+func ListFilesHTTP(file *File) ([]*File, error) {
+	var files []*File
+	var err error
+	var total int64
+	if file.IsFile {
+		files = append(files, file)
+		total += file.Size
+	} else {
+		log.Infof("List files from %s", file.Path)
+
+		err = filepath.Walk(file.Path, func(p string, info os.FileInfo, err error) error {
+			if SkipHidden && info.Name() != "./" && info.Name() != "." {
+				if strings.HasPrefix(info.Name(), ".") {
+					if info.IsDir() {
+						return filepath.SkipDir
+					}
+					return nil
+				}
+			}
+			if !info.IsDir() {
+				files = append(files, &File{
+					Path:    strings.TrimRight(strings.ReplaceAll(p, file.Path, ""), "/"),
+					Size:    info.Size(),
+					IsFile:  !info.IsDir(),
+					IsLocal: true})
+
+				total += info.Size()
+			}
+			return nil
+		})
+	}
+
+	return files, err
+}
+
 // ListFilesSftp as name says collect files
 func ListFilesSftp(cliConf *SftpClient, path string) ([]*File, error) {
 	var files []*File

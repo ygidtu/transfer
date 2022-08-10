@@ -21,7 +21,7 @@ Server
 // ListFiles as name says list all files under directory
 func ListFiles(w http.ResponseWriter, _ *http.Request) {
 
-	files, err := ListFilesLocal(root)
+	files, err := ListFilesHTTP(root)
 	if err != nil {
 		log.Error(err)
 	}
