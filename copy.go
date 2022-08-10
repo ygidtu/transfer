@@ -22,6 +22,13 @@ func initCopy(opt *options) {
 		source = root
 	}
 
+	if _, err := os.Stat(opt.Copy.Remote); os.IsNotExist(err) {
+		err = os.MkdirAll(opt.Copy.Remote, os.ModePerm)
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
+
 	if root, err := NewFile(opt.Copy.Remote); err != nil {
 		log.Fatal(err)
 	} else {
@@ -45,6 +52,7 @@ func initCopy(opt *options) {
 				if err := target.CheckParent(); err != nil {
 					log.Fatal(err)
 				}
+				bar.Describe(f.ID)
 
 				if stat, err := os.Stat(target.Path); !os.IsNotExist(err) {
 					target.Size = stat.Size()
@@ -53,13 +61,13 @@ func initCopy(opt *options) {
 				if target.Size == f.Size {
 					log.Infof("Skip: %s", f.Path)
 					_ = bar.Add64(f.Size)
-					return
+					continue
 				} else if target.Size > f.Size {
 					log.Warnf("%s is corrupted", target.Path)
 					err = os.Remove(target.Path)
 					if err != nil {
 						log.Warnf("failed to remove %s: %v", target.Path, err)
-						return
+						continue
 					}
 					target.Size = 0
 				}
@@ -85,7 +93,6 @@ func initCopy(opt *options) {
 					_ = w.Close()
 					return
 				}
-				bar.Describe(source.ID)
 				_, err = io.Copy(io.MultiWriter(w, bar), r)
 				_ = w.Close()
 				_ = r.Close()
