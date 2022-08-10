@@ -42,7 +42,7 @@ func (file *File) GetTarget(source, target *File) *File {
 	if source.IsFile {
 		sourcePath = filepath.Dir(source.Path)
 	}
-	path := strings.TrimLeft(file.Path, sourcePath)
+	path := strings.Replace(file.Path, sourcePath, "", 1)
 	path = strings.TrimLeft(path, "/")
 
 	return &File{Path: filepath.Join(target.Path, path), IsLocal: !file.IsLocal, IsFile: file.IsFile}

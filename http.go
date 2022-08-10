@@ -166,7 +166,7 @@ func (hc *HTTPClient) Put(source *File, target *File) error {
 		if err != nil {
 			return err
 		}
-		//log.Info(remoteSize)
+
 		if source.Size < remoteSize {
 			log.Warnf("remote file may broken: local size [%d] < remove size [%d]", source.Size, remoteSize)
 
@@ -320,8 +320,7 @@ func initHttp(opt *options) {
 				}
 
 				if opt.Trans.Post {
-					target := f.GetTarget(source, target)
-					if err := client.Put(f, target); err != nil {
+					if err := client.Put(f, f.GetTarget(source, target)); err != nil {
 						log.Warn(err)
 					}
 				} else {
