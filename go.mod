@@ -4,6 +4,7 @@ go 1.16
 
 require (
 	github.com/jlaffaye/ftp v0.0.0-20220612151834-60a941566ce4
+	github.com/k0kubun/go-ansi v0.0.0-20180517002512-3bf9e2903213 // indirect
 	github.com/pkg/sftp v1.13.4
 	github.com/rivo/uniseg v0.3.1 // indirect
 	github.com/schollz/progressbar/v3 v3.9.0

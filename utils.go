@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	ansi "github.com/k0kubun/go-ansi"
 	"github.com/schollz/progressbar/v3"
 	"os"
 	"time"
@@ -28,7 +29,8 @@ func BytesBar(size int64, name string) *progressbar.ProgressBar {
 	}
 
 	return progressbar.NewOptions(int(size),
-		progressbar.OptionSetWriter(os.Stderr),
+		progressbar.OptionSetWriter(ansi.NewAnsiStderr()),
+		progressbar.OptionUseANSICodes(true), // avoid progressbar downsize error
 		progressbar.OptionEnableColorCodes(true),
 		progressbar.OptionShowBytes(true),
 		progressbar.OptionSetDescription(name),
