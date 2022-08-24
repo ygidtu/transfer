@@ -56,6 +56,20 @@ func NewFile(path string) (*File, error) {
 	return nil, err
 }
 
+func NewFileCreate(path string) (file *File, err error) {
+	stat, err := os.Stat(path)
+	if os.IsNotExist(err) {
+		err = os.MkdirAll(path, os.ModePerm)
+	}
+
+	if err == nil {
+		stat, _ = os.Stat(path)
+		file = &File{Path: path, Size: stat.Size(), IsFile: !stat.IsDir(), IsLocal: true}
+	}
+
+	return file, err
+}
+
 func ListFilesLocal(file *File) ([]*File, error) {
 	var files []*File
 	var err error

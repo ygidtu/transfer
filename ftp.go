@@ -185,7 +185,7 @@ func initFtp(opt *options) {
 		}
 		files = append(files, fs...)
 	} else {
-		root, err := NewFile(opt.Ftp.Path)
+		root, err := NewFileCreate(opt.Ftp.Path)
 		if err != nil {
 			log.Fatal(err)
 		}

@@ -261,10 +261,11 @@ func (cliConf *SftpClient) Put(source, target *File) error {
 				if stat.Size() < source.Size && stat.Size() > 0 {
 					log.Debugf("Resume %s from %s", target.Path, ByteCountDecimal(stat.Size()))
 					seek = stat.Size()
+					_ = bar.Add64(seek)
 				} else if stat.Size() == source.Size {
 					log.Debugf("Skip: %s", target.Path)
 					_ = bar.Add64(source.Size)
-					return nil
+					seek = source.Size
 				} else if stat.Size() > source.Size {
 					log.Warnf("%s is corrupted", target.Path)
 					if err := cliConf.sftpClient.Remove(target.Path); err != nil {
@@ -320,10 +321,11 @@ func (cliConf *SftpClient) Pull(source, target *File) error {
 				if stat.Size() < source.Size && stat.Size() > 0 {
 					log.Infof("Resume %s from %s", target.Path, ByteCountDecimal(stat.Size()))
 					seek = stat.Size()
+					_ = bar.Add64(seek)
 				} else if stat.Size() == source.Size {
-					log.Infof("Skip: %s", target.Path)
+					log.Debugf("Skip: %s", target.Path)
 					_ = bar.Add64(source.Size)
-					return nil
+					seek = source.Size
 				} else if stat.Size() > source.Size {
 					log.Warnf("%s is corrupted", target.Path)
 					if err := os.Remove(target.Path); err != nil {
@@ -387,7 +389,7 @@ func initSftp(opt *options) {
 
 	files := make([]*File, 0, 0)
 	if opt.Sftp.Pull {
-		if root, err := NewFile(opt.Sftp.Path); err != nil {
+		if root, err := NewFileCreate(opt.Sftp.Path); err != nil {
 			log.Fatal(err)
 		} else {
 			target = root

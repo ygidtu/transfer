@@ -22,14 +22,7 @@ func initCopy(opt *options) {
 		source = root
 	}
 
-	if _, err := os.Stat(opt.Copy.Remote); os.IsNotExist(err) {
-		err = os.MkdirAll(opt.Copy.Remote, os.ModePerm)
-		if err != nil {
-			log.Fatal(err)
-		}
-	}
-
-	if root, err := NewFile(opt.Copy.Remote); err != nil {
+	if root, err := NewFileCreate(opt.Copy.Remote); err != nil {
 		log.Fatal(err)
 	} else {
 		target = root
