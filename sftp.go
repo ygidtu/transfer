@@ -261,10 +261,8 @@ func (cliConf *SftpClient) Put(source, target *File) error {
 				if stat.Size() < source.Size && stat.Size() > 0 {
 					log.Debugf("Resume %s from %s", target.Path, ByteCountDecimal(stat.Size()))
 					seek = stat.Size()
-					_ = bar.Add64(seek)
 				} else if stat.Size() == source.Size {
 					log.Debugf("Skip: %s", target.Path)
-					_ = bar.Add64(source.Size)
 					seek = source.Size
 				} else if stat.Size() > source.Size {
 					log.Warnf("%s is corrupted", target.Path)
@@ -282,7 +280,6 @@ func (cliConf *SftpClient) Put(source, target *File) error {
 		}
 
 		_ = bar.Add64(seek)
-
 		if _, err := srcFile.Seek(seek, 0); err != nil {
 			return err
 		}
@@ -321,10 +318,8 @@ func (cliConf *SftpClient) Pull(source, target *File) error {
 				if stat.Size() < source.Size && stat.Size() > 0 {
 					log.Infof("Resume %s from %s", target.Path, ByteCountDecimal(stat.Size()))
 					seek = stat.Size()
-					_ = bar.Add64(seek)
 				} else if stat.Size() == source.Size {
 					log.Debugf("Skip: %s", target.Path)
-					_ = bar.Add64(source.Size)
 					seek = source.Size
 				} else if stat.Size() > source.Size {
 					log.Warnf("%s is corrupted", target.Path)
@@ -336,7 +331,6 @@ func (cliConf *SftpClient) Pull(source, target *File) error {
 		}
 
 		_ = bar.Add64(seek)
-
 		if _, err := srcFile.Seek(seek, 0); err != nil {
 			return err
 		}
@@ -432,5 +426,4 @@ func initSftp(opt *options) {
 	}
 
 	close(taskChan)
-
 }

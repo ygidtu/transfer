@@ -4,6 +4,7 @@ import (
 	"github.com/schollz/progressbar/v3"
 	"github.com/voxelbrain/goptions"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 	"os"
 	"sync"
 )
@@ -23,6 +24,7 @@ type options struct {
 	Skip       bool          `goptions:"--skip, description='skip hidden files'"`
 	Help       goptions.Help `goptions:"-h, --help, description='show this help'"`
 	Version    bool          `goptions:"-v, --version, description='show version information'"`
+	Debug      bool          `goptions:"-d, --debug, description='Show more info'"`
 
 	goptions.Verbs
 	Server struct {
@@ -68,8 +70,26 @@ func main() {
 		options.Concurrent = 1
 	}
 
+	// ini logger
+	encoder := NewEncoderConfig()
+	level := zap.InfoLevel
+	if options.Debug {
+		level = zap.DebugLevel
+	}
+
+	core := zapcore.NewCore(
+		zapcore.NewConsoleEncoder(encoder),
+		zapcore.AddSync(os.Stdout),
+		level,
+	)
+
+	logger := zap.New(core, zap.AddCaller())
+	defer logger.Sync()
+	log = logger.Sugar()
+
 	SkipHidden = options.Skip
 
+	// init service
 	if options.Verbs == "server" {
 		initServer(&options)
 	} else if options.Verbs == "trans" {

@@ -1,10 +1,8 @@
 package main
 
 import (
-	"os"
 	"time"
 
-	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
 
@@ -29,20 +27,4 @@ func NewEncoderConfig() zapcore.EncoderConfig {
 // TimeEncoder format logger time format
 func TimeEncoder(t time.Time, enc zapcore.PrimitiveArrayEncoder) {
 	enc.AppendString(t.Format("2006-01-02 15:04:05.000"))
-}
-
-// init logger
-func init() {
-	encoder := NewEncoderConfig()
-	level := zap.InfoLevel
-
-	core := zapcore.NewCore(
-		zapcore.NewConsoleEncoder(encoder),
-		zapcore.AddSync(os.Stdout),
-		level,
-	)
-
-	logger := zap.New(core, zap.AddCaller())
-	defer logger.Sync()
-	log = logger.Sugar()
 }

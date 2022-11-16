@@ -179,12 +179,11 @@ func (hc *HTTPClient) Put(source *File, target *File) error {
 
 		if start == total {
 			log.Debugf("Skip: %s", source.Path)
-			_ = bar.Add64(total)
-			return nil
+			start = total
 		} else if start > 0 {
 			log.Debugf("Resume from: %s", ByteCountDecimal(start))
 		}
-
+		_ = bar.Add64(start)
 		// save to file
 		f, err := os.Open(source.Path)
 		if err != nil {
@@ -244,6 +243,7 @@ func (hc *HTTPClient) Pull(source *File, target *File) error {
 				if err != nil {
 					log.Error(err)
 				}
+				_ = bar.Add64(stat.Size())
 			}
 		}
 

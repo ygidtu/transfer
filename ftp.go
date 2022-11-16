@@ -86,6 +86,7 @@ func (fc *FtpClient) Put(source, target *File) error {
 			return fmt.Errorf("failed to open local file %s: %v", source.Path, err)
 		}
 
+		_ = bar.Add64(offset)
 		if offset > 0 {
 			log.Debugf("%s -> %s [restore from: %s]", source.Path, target.Path, ByteCountDecimal(offset))
 			if _, err := r.Seek(offset, 0); err != nil {
@@ -93,7 +94,6 @@ func (fc *FtpClient) Put(source, target *File) error {
 			}
 		} else if source.Size == offset {
 			log.Debugf("Skip: %s", source.Path)
-			_ = bar.Add64(offset)
 			return nil
 		}
 		reader := progressbar.NewReader(r, bar)
@@ -132,10 +132,10 @@ func (fc *FtpClient) Pull(source, target *File) error {
 			return fmt.Errorf("failed to open local file %s: %v", target.Path, err)
 		}
 
+		_ = bar.Add64(source.Size)
 		if source.Size > size {
 			log.Debugf("%s <- %s [restore from: %s]", target.Path, source.Path, ByteCountDecimal(size))
 		} else if source.Size == size {
-			_ = bar.Add64(source.Size)
 			log.Debugf("Skip: %s", source.Path)
 			return nil
 		}
