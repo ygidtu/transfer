@@ -7,9 +7,11 @@ transfer  --help
 Usage: transfer [global options] <verb> [verb options]
 
 Global options:
-            --skip    Skip hidden files
-        -h, --help    Show this help
-        -v, --version Show version information
+        -n, --n-jobs  the number of jobs to run
+            --skip    skip hidden files
+        -h, --help    show this help
+        -v, --version show version information
+        -d, --debug   Show more info
 
 Verbs:
     cp:

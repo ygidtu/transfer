@@ -24,7 +24,7 @@ type options struct {
 	Skip       bool          `goptions:"--skip, description='skip hidden files'"`
 	Help       goptions.Help `goptions:"-h, --help, description='show this help'"`
 	Version    bool          `goptions:"-v, --version, description='show version information'"`
-	Debug      bool          `goptions:"-d, --debug, description='Show more info'"`
+	Debug      bool          `goptions:"-d, --debug, description='show more info'"`
 
 	goptions.Verbs
 	Server struct {
@@ -61,15 +61,6 @@ func main() {
 	var options = options{}
 	goptions.ParseAndFail(&options)
 
-	if options.Version {
-		log.Info("Current version: v0.0.7")
-		os.Exit(0)
-	}
-
-	if options.Concurrent < 1 {
-		options.Concurrent = 1
-	}
-
 	// ini logger
 	encoder := NewEncoderConfig()
 	level := zap.InfoLevel
@@ -88,6 +79,15 @@ func main() {
 	log = logger.Sugar()
 
 	SkipHidden = options.Skip
+
+	if options.Version {
+		log.Info("Current version: v0.0.8")
+		os.Exit(0)
+	}
+
+	if options.Concurrent < 1 {
+		options.Concurrent = 1
+	}
 
 	// init service
 	if options.Verbs == "server" {
