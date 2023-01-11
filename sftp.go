@@ -24,11 +24,12 @@ type SftpClient struct {
 	Concurrent int
 }
 
-func NewSftp(host, proxy string, scp bool, concurrent int) *SftpClient {
+func NewSftp(host, proxy, rsa string, scp bool, concurrent int) *SftpClient {
 	remoteHost, err := CreateProxy(host)
 	if err != nil {
 		log.Fatalf("wrong format of ssh server [%s]:  %s", host, err)
 	}
+	remoteHost.Path = rsa
 
 	if remoteHost.Port == "" {
 		remoteHost.Port = "22"
@@ -51,8 +52,11 @@ func NewSftp(host, proxy string, scp bool, concurrent int) *SftpClient {
 }
 
 // sshAuth
-func sshConfig(username, password string) (*ssh.ClientConfig, error) {
+func sshConfig(username, password, rsa string) (*ssh.ClientConfig, error) {
 	idRsa := filepath.Join(os.Getenv("HOME"), ".ssh", "id_rsa")
+	if rsa != "" {
+		idRsa = rsa
+	}
 	var methods []ssh.AuthMethod
 
 	if password != "" {
@@ -86,7 +90,7 @@ func sshConfig(username, password string) (*ssh.ClientConfig, error) {
 // sshClient generate a ssh client by id_rsa or password
 func sshClient(host *Proxy) (*ssh.Client, error) {
 
-	config, err := sshConfig(host.Username, host.Password)
+	config, err := sshConfig(host.Username, host.Password, host.Path)
 	if err != nil {
 		return nil, err
 	}
@@ -99,7 +103,7 @@ func sshClient(host *Proxy) (*ssh.Client, error) {
 }
 
 func sshClientConn(conn net.Conn, host *Proxy) (*ssh.Client, error) {
-	config, err := sshConfig(host.Username, host.Password)
+	config, err := sshConfig(host.Username, host.Password, host.Path)
 	if err != nil {
 		return nil, err
 	}
@@ -353,7 +357,7 @@ func initSftp(opt *options) {
 		opt.Sftp.Path = "./"
 	}
 
-	client := NewSftp(opt.Sftp.Host, opt.Sftp.Proxy, opt.Sftp.Scp, opt.Concurrent)
+	client := NewSftp(opt.Sftp.Host, opt.Sftp.Proxy, opt.Sftp.IdRsa, opt.Sftp.Scp, opt.Concurrent)
 
 	taskChan := make(chan *File)
 	for i := 0; i < opt.Concurrent; i++ {

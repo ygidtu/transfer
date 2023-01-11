@@ -43,7 +43,8 @@ type options struct {
 		Remote string `goptions:"-r, --remote, obligatory,description='remote path in server'"`
 		Pull   bool   `goptions:"-p, --pull, description='pull files from server'"`
 		Proxy  string `goptions:"-x, --proxy, description='the proxy to use [socks5 or ssh://user:passwd@host:port]'"`
-		Scp    bool   `goptions:"-s, --scp, description='transfer throught scp instead of sftp'"`
+		Scp    bool   `goptions:"-s, --scp, description='transfer through scp instead of sftp'"`
+		IdRsa  string `goptions:"-i, --rsa, description='path to id_rsa file, default: ~/.ssh/id_rsa'"`
 	} `goptions:"sftp"`
 	Ftp struct {
 		Path   string `goptions:"-l, --local, description='the local path or url'"`
@@ -81,7 +82,7 @@ func main() {
 	SkipHidden = options.Skip
 
 	if options.Version {
-		log.Info("Current version: v0.0.8")
+		log.Info("Current version: v0.0.9")
 		os.Exit(0)
 	}
 

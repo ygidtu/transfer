@@ -14,6 +14,7 @@ type Proxy struct {
 	Password string
 	Scheme   string
 	URL      *url.URL
+	Path     string
 }
 
 // CreateProxy creates a new Proxy by string
