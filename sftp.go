@@ -353,7 +353,6 @@ func RemoteToRemote(sourceClient, targetClient *SftpClient, source, target *File
 	if source.IsLocal || target.IsLocal {
 		return fmt.Errorf("source file [%v] and target file [%v] should both be remote", source.Path, target.Path)
 	}
-	log.Infof("%v %v", source.Path, target.Path)
 	if !targetClient.Exists(filepath.Dir(target.Path)) {
 		if err := targetClient.sftpClient.MkdirAll(filepath.Dir(target.Path)); err != nil {
 			return fmt.Errorf("failed to create parent directory for %s: %v", target.Path, err)
@@ -389,7 +388,7 @@ func RemoteToRemote(sourceClient, targetClient *SftpClient, source, target *File
 
 	_ = bar.Add64(seek)
 	if _, err := srcFile.Seek(seek, 0); err != nil {
-		return err
+		return fmt.Errorf("failed to seek: %v", err)
 	}
 	_, err = io.Copy(io.MultiWriter(bar, dstFile), srcFile)
 	_ = srcFile.Close()
@@ -434,7 +433,7 @@ func initSftp(opt *options) {
 				if targetClient != nil {
 					targetFile := f.GetTarget(source, target)
 					targetFile.IsLocal = false
-					if err := RemoteToRemote(client, targetClient, source, targetFile, opt.Sftp.Scp); err != nil {
+					if err := RemoteToRemote(client, targetClient, f, targetFile, opt.Sftp.Scp); err != nil {
 						log.Warn(err)
 					}
 				} else if opt.Sftp.Pull {

@@ -41,6 +41,10 @@ func CreateProxy(proxy string) (*Proxy, error) {
 			log.Fatalf(err.Error())
 		}
 		p.Username = user.Username
+
+		if p.Port == "0" {
+			p.Port = "22"
+		}
 	}
 
 	return p, nil
