@@ -348,6 +348,56 @@ func (cliConf *SftpClient) Pull(source, target *File) error {
 	return fmt.Errorf("soure file [%v] should be remote, target file [%v] should be local", source, target)
 }
 
+// RemoteToRemote transfer files from remote server to another
+func RemoteToRemote(sourceClient, targetClient *SftpClient, source, target *File, scp bool) error {
+	if source.IsLocal || target.IsLocal {
+		return fmt.Errorf("source file [%v] and target file [%v] should both be remote", source.Path, target.Path)
+	}
+	log.Infof("%v %v", source.Path, target.Path)
+	if !targetClient.Exists(filepath.Dir(target.Path)) {
+		if err := targetClient.sftpClient.MkdirAll(filepath.Dir(target.Path)); err != nil {
+			return fmt.Errorf("failed to create parent directory for %s: %v", target.Path, err)
+		}
+	}
+	srcFile, err := sourceClient.sftpClient.Open(source.Path)
+	if err != nil {
+		return fmt.Errorf("failed to open remove file: %s - %v", target.Path, err)
+	}
+
+	dstFile, err := targetClient.sftpClient.OpenFile(target.Path, os.O_APPEND|os.O_CREATE|os.O_WRONLY)
+	if err != nil {
+		return fmt.Errorf("failed to open %s: %s", target.Path, err)
+	}
+
+	var seek int64 = 0
+	if !scp {
+		if stat, err := targetClient.sftpClient.Stat(target.Path); !os.IsNotExist(err) {
+			if stat.Size() < source.Size && stat.Size() > 0 {
+				log.Debugf("Resume %s from %s", target.Path, ByteCountDecimal(stat.Size()))
+				seek = stat.Size()
+			} else if stat.Size() == source.Size {
+				log.Debugf("Skip: %s", target.Path)
+				seek = source.Size
+			} else if stat.Size() > source.Size {
+				log.Warnf("%s is corrupted", target.Path)
+				if err := targetClient.sftpClient.Remove(target.Path); err != nil {
+					return fmt.Errorf("failed to remove %s: %s", target.Path, err)
+				}
+			}
+		}
+	}
+
+	_ = bar.Add64(seek)
+	if _, err := srcFile.Seek(seek, 0); err != nil {
+		return err
+	}
+	_, err = io.Copy(io.MultiWriter(bar, dstFile), srcFile)
+	_ = srcFile.Close()
+	_ = dstFile.Close()
+
+	return err
+}
+
 func initSftp(opt *options) {
 	if !strings.HasPrefix(opt.Sftp.Host, "ssh") {
 		opt.Sftp.Host = fmt.Sprintf("ssh://%s", opt.Sftp.Host)
@@ -358,6 +408,15 @@ func initSftp(opt *options) {
 	}
 
 	client := NewSftp(opt.Sftp.Host, opt.Sftp.Proxy, opt.Sftp.IdRsa, opt.Sftp.Scp, opt.Concurrent)
+
+	var targetClient *SftpClient
+	if opt.Sftp.Target != "" {
+		log.Infof("Transfer data from remote to remote")
+		if !strings.HasPrefix(opt.Sftp.Target, "ssh") {
+			opt.Sftp.Target = fmt.Sprintf("ssh://%s", opt.Sftp.Target)
+		}
+		targetClient = NewSftp(opt.Sftp.Target, opt.Sftp.Proxy, opt.Sftp.IdRsa, opt.Sftp.Scp, opt.Concurrent)
+	}
 
 	taskChan := make(chan *File)
 	for i := 0; i < opt.Concurrent; i++ {
@@ -372,7 +431,13 @@ func initSftp(opt *options) {
 				}
 				bar.Describe(f.ID)
 
-				if opt.Sftp.Pull {
+				if targetClient != nil {
+					targetFile := f.GetTarget(source, target)
+					targetFile.IsLocal = false
+					if err := RemoteToRemote(client, targetClient, source, targetFile, opt.Sftp.Scp); err != nil {
+						log.Warn(err)
+					}
+				} else if opt.Sftp.Pull {
 					if err := client.Pull(f, f.GetTarget(source, target)); err != nil {
 						log.Warn(err)
 					}
@@ -386,7 +451,25 @@ func initSftp(opt *options) {
 	}
 
 	files := make([]*File, 0, 0)
-	if opt.Sftp.Pull {
+	if targetClient != nil {
+		if root, err := client.NewFile(opt.Sftp.Path); err != nil {
+			log.Fatal(err)
+		} else {
+			source = root
+		}
+
+		if root, err := targetClient.NewFile(opt.Sftp.Remote); err != nil {
+			log.Fatal(err)
+		} else {
+			target = root
+		}
+
+		fs, err := ListFilesSftp(client, opt.Sftp.Path)
+		if err != nil {
+			log.Fatal(err)
+		}
+		files = append(files, fs...)
+	} else if opt.Sftp.Pull {
 		if root, err := NewFileCreate(opt.Sftp.Path); err != nil {
 			log.Fatal(err)
 		} else {

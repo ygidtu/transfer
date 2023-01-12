@@ -40,6 +40,7 @@ type options struct {
 	Sftp struct {
 		Path   string `goptions:"-l, --local, description='the local path or url'"`
 		Host   string `goptions:"-u, --host, obligatory,description='the remote server [user:passwd@host:port]]'"`
+		Target string `goptions:"-t, --target, obligatory,description='the remote server [user:passwd@host:port]], used to transfer data from --host to this one'"`
 		Remote string `goptions:"-r, --remote, obligatory,description='remote path in server'"`
 		Pull   bool   `goptions:"-p, --pull, description='pull files from server'"`
 		Proxy  string `goptions:"-x, --proxy, description='the proxy to use [socks5 or ssh://user:passwd@host:port]'"`
@@ -58,14 +59,10 @@ type options struct {
 	} `goptions:"cp"`
 }
 
-func main() {
-	var options = options{}
-	goptions.ParseAndFail(&options)
-
-	// ini logger
+func setLogger(debug bool) {
 	encoder := NewEncoderConfig()
 	level := zap.InfoLevel
-	if options.Debug {
+	if debug {
 		level = zap.DebugLevel
 	}
 
@@ -78,11 +75,19 @@ func main() {
 	logger := zap.New(core, zap.AddCaller())
 	defer logger.Sync()
 	log = logger.Sugar()
+}
+
+func main() {
+	var options = options{}
+	goptions.ParseAndFail(&options)
+
+	// ini logger
+	setLogger(options.Debug)
 
 	SkipHidden = options.Skip
 
 	if options.Version {
-		log.Info("Current version: v0.0.9")
+		log.Info("Current version: v0.1.0")
 		os.Exit(0)
 	}
 
