@@ -16,6 +16,12 @@ var (
 	wg         sync.WaitGroup
 	bar        *progressbar.ProgressBar
 	SkipHidden = false
+
+	// version and build info
+	buildStamp string
+	gitHash    string
+	goVersion  string
+	version    string
 )
 
 // command line parameters
@@ -40,7 +46,7 @@ type options struct {
 	Sftp struct {
 		Path   string `goptions:"-l, --local, description='the local path or url'"`
 		Host   string `goptions:"-u, --host, obligatory,description='the remote server [user:passwd@host:port]]'"`
-		Target string `goptions:"-t, --target, obligatory,description='the remote server [user:passwd@host:port]], used to transfer data from --host to this one'"`
+		Target string `goptions:"-t, --target, description='the remote server [user:passwd@host:port]], used to transfer data from --host to this one'"`
 		Remote string `goptions:"-r, --remote, obligatory,description='remote path in server'"`
 		Pull   bool   `goptions:"-p, --pull, description='pull files from server'"`
 		Proxy  string `goptions:"-x, --proxy, description='the proxy to use [socks5 or ssh://user:passwd@host:port]'"`
@@ -87,7 +93,10 @@ func main() {
 	SkipHidden = options.Skip
 
 	if options.Version {
-		log.Info("Current version: v0.1.0")
+		log.Infof("Current version: %s", version)
+		log.Infof("Git Commit Hash: %s", gitHash)
+		log.Infof("UTC Build Time : %s", buildStamp)
+		log.Infof("Golang Version : %s", goVersion)
 		os.Exit(0)
 	}
 
