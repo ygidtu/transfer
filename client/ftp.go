@@ -1,15 +1,16 @@
 package client
 
 import (
-	"bytes"
 	"crypto/md5"
 	"fmt"
 	"github.com/jlaffaye/ftp"
 	"io"
 	"io/fs"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -51,42 +52,73 @@ type FtpFileReader struct {
 	whence int
 }
 
-func (ffr FtpFileReader) Read(p []byte) (int, error) {
-	buf := new(bytes.Buffer)
-	err := ffr.client.StorFrom(ffr.path, buf, uint64(int(ffr.offset)+ffr.whence))
+func (ffr *FtpFileReader) Read(p []byte) (int, error) {
+	resp, err := ffr.client.RetrFrom(ffr.path, uint64(ffr.offset)+uint64(ffr.whence))
+	defer resp.Close()
 	if err != nil {
-		return len(p), err
+		return 0, err
 	}
-	return buf.Read(p)
+	return resp.Read(p)
 }
 
-func (ffr FtpFileReader) Seek(offset int64, whence int) (int64, error) {
+func (ffr *FtpFileReader) Seek(offset int64, whence int) (int64, error) {
 	ffr.offset = offset
 	ffr.whence = whence
 	return int64(whence) + offset, nil
 }
 
-func (ffr FtpFileReader) Close() error {
+func (ffr *FtpFileReader) Close() error {
 	return nil
 }
 
 type FtpFileWriter struct {
-	client *ftp.ServerConn
-	path   string
-	offset uint64
+	client   *ftp.ServerConn
+	fullPath string
+	writer   io.WriteCloser
+	reader   io.ReadCloser
+	closed   bool
+	mutex    sync.Mutex
+	errChan  chan error
+	offset   int
 }
 
-func (ffw FtpFileWriter) Write(p []byte) (int, error) {
-	buf := new(bytes.Buffer)
-	n, err := buf.Read(p)
-	if err != nil {
-		return n, err
+func (w *FtpFileWriter) Write(p []byte) (n int, err error) {
+	w.mutex.Lock()
+	defer w.mutex.Unlock()
+
+	if w.closed {
+		return 0, net.ErrClosed
 	}
-	fmt.Printf("ftp writer: %v\n", p)
-	return len(p), ffw.client.StorFrom(ffw.path, buf, ffw.offset)
+
+	if w.writer == nil {
+		pipeR, pipeW := io.Pipe()
+		w.reader = pipeR
+		w.writer = pipeW
+
+		go func() {
+			w.errChan <- w.client.StorFrom(w.fullPath, w.reader, uint64(w.offset))
+		}()
+
+	}
+
+	return w.writer.Write(p)
 }
 
-func (ffw FtpFileWriter) Close() error {
+func (w *FtpFileWriter) Close() error {
+	if !w.closed {
+		if w.reader != nil {
+			if err := w.reader.Close(); err != nil {
+				return err
+			}
+		}
+
+		if w.writer != nil {
+			if err := w.writer.Close(); err != nil {
+				return err
+			}
+		}
+	}
+	w.closed = true
 	return nil
 }
 
@@ -127,7 +159,6 @@ func (fc *FtpClient) Connect() error {
 		}
 	}
 
-	//fmt.Printf("ftp connect: %v %v %v\n", fc.Host.Addr(), fc.Host.Username, fc.Host.Password)
 	fc.Client = c
 	return nil
 }
@@ -137,7 +168,6 @@ func (fc *FtpClient) Close() error {
 }
 
 func (fc *FtpClient) NewFile(path string) (*File, error) {
-	fmt.Printf("ftp connect: %v\n", path)
 	stat, err := fc.Client.List(path)
 
 	if len(stat) > 0 && err == nil {
@@ -158,19 +188,20 @@ func (fc *FtpClient) NewFile(path string) (*File, error) {
 }
 
 func (fc *FtpClient) Exists(path string) bool {
-	stat, err := fc.Client.List(path)
-	if err != nil || len(stat) != 1 {
-		return false
-	}
-	return true
+	_, err := fc.Stat(path)
+	return !os.IsNotExist(err)
 }
 
 func (fc *FtpClient) Stat(path string) (fs.FileInfo, error) {
 	stat, err := fc.Client.List(path)
-	if err != nil || len(stat) != 1 {
-		return nil, os.ErrNotExist
+	if len(stat) > 0 && err == nil {
+		for _, i := range stat {
+			if i.Name == filepath.Base(path) {
+				return FtpFileInfo{i}, nil
+			}
+		}
 	}
-	return FtpFileInfo{stat[0]}, nil
+	return nil, os.ErrNotExist
 }
 
 func (fc *FtpClient) Mkdir(path string) error {
@@ -189,20 +220,18 @@ func (fc *FtpClient) Reader(path string) (io.ReadSeekCloser, error) {
 	if ok := fc.Exists(path); !ok {
 		return nil, os.ErrNotExist
 	}
-	return FtpFileReader{fc.Client, path, 0, 0}, nil
+	return &FtpFileReader{client: fc.Client, path: path, whence: 0, offset: 0}, nil
 }
 
 func (fc *FtpClient) Writer(path string, code int) (io.WriteCloser, error) {
 	offset := 0
-
-	if code&os.O_TRUNC == 0 {
+	if code&os.O_TRUNC != 0 {
 		stat, err := fc.Stat(path)
 		if err == nil {
 			offset = int(stat.Size())
 		}
 	}
-	fmt.Printf("ftp writer: %v, %v\n", path, code)
-	return FtpFileWriter{fc.Client, path, uint64(offset)}, nil
+	return &FtpFileWriter{client: fc.Client, fullPath: path, offset: offset}, nil
 }
 
 func (fc *FtpClient) GetMd5(file *File) error {
