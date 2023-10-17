@@ -5,7 +5,6 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
-	"github.com/ygidtu/transfer/base"
 	"io"
 	"io/fs"
 	"net/http"
@@ -57,45 +56,6 @@ func (hfi HttpFileInfo) ModTime() time.Time {
 	return hfi.ModTimeT
 }
 
-// HttpFileReader create an instance of fs.FileReadCloser for http file
-type HttpFileReader struct {
-	client HttpClient
-	url    string
-	offset int64
-	whence int
-}
-
-func (hfr HttpFileReader) Read(p []byte) (int, error) {
-	req, err := http.NewRequest(http.MethodGet, hfr.url, nil)
-	if err != nil {
-		return 0, err
-	}
-
-	client := &http.Client{}
-	if hfr.client.transport != nil {
-		client.Transport = hfr.client.transport
-	}
-
-	req.Header.Set("Range", fmt.Sprintf("bytes=%d-", hfr.offset+int64(hfr.whence)))
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return 0, err
-	}
-
-	return resp.Body.Read(p)
-}
-
-func (hfr HttpFileReader) Seek(offset int64, whence int) (int64, error) {
-	hfr.offset = offset
-	hfr.whence = whence
-	return int64(whence) + offset, nil
-}
-
-func (hfr HttpFileReader) Close() error {
-	return hfr.client.Close()
-}
-
 // HttpFileWriter create an instance of fs.FileReadCloser for http file
 type HttpFileWriter struct {
 	client HttpClient
@@ -121,55 +81,46 @@ func (hfw HttpFileWriter) Write(p []byte) (int, error) {
 	_, err = client.Do(req)
 	return n, err
 }
-
-func (hfw HttpFileWriter) Close() error {
-	return nil
-}
+func (hfw HttpFileWriter) Close() error { return nil }
 
 type HttpClient struct {
 	host      *Proxy
 	root      *File
 	proxy     *Proxy
 	transport *http.Transport
+	server    bool
 }
 
-func NewHTTPClient(opt *base.Options) (HttpClient, error) {
-	client := HttpClient{}
-	remoteHost, err := CreateProxy(opt.Http.Host)
-	if err != nil {
-		return client, err
-	}
-	client.host = remoteHost
-
-	if opt.Http.Proxy != "" {
-		client.proxy, err = CreateProxy(opt.Http.Proxy)
-		if err != nil {
-			return client, err
-		}
-
+func NewHTTPClient(host, proxy *Proxy) (*HttpClient, error) {
+	client := &HttpClient{host: host, proxy: proxy, server: opt.Server != ""}
+	if proxy != nil {
 		client.transport = &http.Transport{
 			Proxy:           http.ProxyURL(client.proxy.URL),
 			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 		}
 	}
+	var err error
 	local := NewLocal()
-	client.root, err = local.NewFile(opt.Http.Path)
+	client.root, err = local.NewFile(host.Path)
 	if err != nil {
 		return client, err
 	}
 	return client, nil
 }
 
-func (hc HttpClient) NewUrl(url string) (io.ReadCloser, error) {
+func (hc *HttpClient) NewUrl(url string) (io.ReadCloser, error) {
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
 	}
-	if req.Response.StatusCode == http.StatusNotFound {
-		return nil, os.ErrNotExist
-	}
-	if req.Response.StatusCode == http.StatusNotModified {
-		return nil, os.ErrPermission
+
+	if req.Response != nil {
+		if req.Response.StatusCode == http.StatusNotFound {
+			return nil, os.ErrNotExist
+		}
+		if req.Response.StatusCode == http.StatusNotModified {
+			return nil, os.ErrPermission
+		}
 	}
 
 	client := &http.Client{}
@@ -184,8 +135,10 @@ func (hc HttpClient) NewUrl(url string) (io.ReadCloser, error) {
 	return resp.Body, nil
 }
 
+// HttpServer handlers
+
 // ListFilesServer as name says list all files under directory, and wrap into json format to serve
-func (hc HttpClient) ListFilesServer(w http.ResponseWriter, _ *http.Request) {
+func (hc *HttpClient) ListFilesServer(w http.ResponseWriter, _ *http.Request) {
 	local := NewLocal()
 	files, err := local.ListFiles(hc.root)
 	if err != nil {
@@ -193,9 +146,7 @@ func (hc HttpClient) ListFilesServer(w http.ResponseWriter, _ *http.Request) {
 	}
 
 	for _, f := range files.Files {
-		if f.Path == hc.root.Path {
-			f.Path = filepath.Base(f.Path)
-		}
+		f.Path = strings.Replace(f.Path, hc.root.Path, "", 1)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -204,22 +155,22 @@ func (hc HttpClient) ListFilesServer(w http.ResponseWriter, _ *http.Request) {
 }
 
 // GetFilesServer as name says get posted file and save it
-func (hc HttpClient) GetFilesServer(w http.ResponseWriter, req *http.Request) {
+func (hc *HttpClient) GetFilesServer(w http.ResponseWriter, req *http.Request) {
 	var err error
 	switch req.Method {
 	case "POST":
 		{
-			var opath string
+			var outputPath string
 			mode := "a"
 			for k, v := range req.URL.Query() {
 				if k == "path" && len(v) > 0 {
-					opath = filepath.Join(hc.root.Path, v[0])
+					outputPath = filepath.Join(hc.root.Path, v[0])
 				} else if k == "mode" && len(v) > 0 {
 					mode = v[0]
 				}
 			}
 
-			oDir := filepath.Dir(opath)
+			oDir := filepath.Dir(outputPath)
 			if _, err := os.Stat(oDir); os.IsNotExist(err) {
 				if err := os.MkdirAll(oDir, os.ModePerm); err != nil {
 					e := fmt.Sprintf("failed to create %s: %v", oDir, err)
@@ -230,14 +181,14 @@ func (hc HttpClient) GetFilesServer(w http.ResponseWriter, req *http.Request) {
 
 			var f *os.File
 			if mode == "a" {
-				f, err = os.OpenFile(opath, os.O_WRONLY|os.O_CREATE|os.O_APPEND, os.ModePerm)
+				f, err = os.OpenFile(outputPath, os.O_WRONLY|os.O_CREATE|os.O_APPEND, os.ModePerm)
 			} else {
-				log.Infof("Trunc file %s", opath)
-				f, err = os.OpenFile(opath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, os.ModePerm)
+				log.Infof("Trunc file %s", outputPath)
+				f, err = os.OpenFile(outputPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, os.ModePerm)
 			}
 
 			if err != nil {
-				e := fmt.Sprintf("failed to open %s: %v", opath, err)
+				e := fmt.Sprintf("failed to open %s: %v", outputPath, err)
 				log.Error(e)
 				_, _ = io.WriteString(w, e)
 				return
@@ -245,7 +196,7 @@ func (hc HttpClient) GetFilesServer(w http.ResponseWriter, req *http.Request) {
 
 			_, err = io.Copy(f, req.Body)
 			if err != nil {
-				e := fmt.Sprintf("failed to copy %s: %v", opath, err)
+				e := fmt.Sprintf("failed to copy %s: %v", outputPath, err)
 				log.Error(e)
 				_, _ = io.WriteString(w, e)
 				return
@@ -273,7 +224,7 @@ func (hc HttpClient) GetFilesServer(w http.ResponseWriter, req *http.Request) {
 	}
 }
 
-func (hc HttpClient) CreateDirServer(w http.ResponseWriter, req *http.Request) {
+func (hc *HttpClient) CreateDirServer(w http.ResponseWriter, req *http.Request) {
 	for k, v := range req.URL.Query() {
 		if k == "path" && len(v) > 0 {
 			path := filepath.Join(hc.root.Path, v[0])
@@ -293,7 +244,7 @@ func (hc HttpClient) CreateDirServer(w http.ResponseWriter, req *http.Request) {
 	}
 }
 
-func (hc HttpClient) GetMd5Server(w http.ResponseWriter, req *http.Request) {
+func (hc *HttpClient) GetMd5Server(w http.ResponseWriter, req *http.Request) {
 	for k, v := range req.URL.Query() {
 		if k == "path" && len(v) > 0 {
 			path := filepath.Join(hc.root.Path, v[0])
@@ -320,7 +271,7 @@ func (hc HttpClient) GetMd5Server(w http.ResponseWriter, req *http.Request) {
 	}
 }
 
-func (hc HttpClient) StatServer(w http.ResponseWriter, req *http.Request) {
+func (hc *HttpClient) StatServer(w http.ResponseWriter, req *http.Request) {
 	for k, v := range req.URL.Query() {
 		if k == "path" && len(v) > 0 {
 			path := filepath.Join(hc.root.Path, v[0])
@@ -335,7 +286,8 @@ func (hc HttpClient) StatServer(w http.ResponseWriter, req *http.Request) {
 			} else {
 				statStruct := NewHttpFileInfo(stat)
 				statBytes, err := json.Marshal(statStruct)
-				if err != nil {
+
+				if err == nil {
 					_, _ = w.Write(statBytes)
 				} else {
 					_, _ = io.WriteString(w, err.Error())
@@ -347,39 +299,43 @@ func (hc HttpClient) StatServer(w http.ResponseWriter, req *http.Request) {
 	}
 }
 
-func (hc HttpClient) StartServer() error {
-	log.Info("path: ", hc.root)
+func (hc *HttpClient) StartServer() error {
+	log.Info("path: ", hc.root.Path)
 	log.Info("host: ", hc.host)
 
 	http.HandleFunc("/list", hc.ListFilesServer)
 	http.HandleFunc("/post", hc.GetFilesServer)
 	http.HandleFunc("/create", hc.CreateDirServer)
-	http.HandleFunc("/md5", hc.CreateDirServer)
+	http.HandleFunc("/md5", hc.GetMd5Server)
+	http.HandleFunc("/stat", hc.StatServer)
 
-	if _, ok := os.Stat(opt.Http.Path); os.IsNotExist(ok) {
-		if err := os.MkdirAll(opt.Http.Path, os.ModePerm); err != nil {
+	if _, ok := os.Stat(opt.Source); os.IsNotExist(ok) {
+		if err := os.MkdirAll(opt.Source, os.ModePerm); err != nil {
 			log.Fatal(err)
 		}
 	}
-	f, err := NewFile(opt.Http.Path)
-	if err != nil {
-		log.Fatal(err)
-	}
-	if !f.IsFile {
-		http.Handle("/", http.StripPrefix("/", http.FileServer(http.Dir(f.Path))))
+
+	if !hc.root.IsFile {
+		http.Handle("/", http.StripPrefix("/", http.FileServer(http.Dir(hc.root.Path))))
 	} else {
-		http.Handle("/", http.StripPrefix("/", http.FileServer(http.Dir(filepath.Dir(f.Path)))))
+		http.Handle("/", http.StripPrefix("/", http.FileServer(http.Dir(filepath.Dir(hc.root.Path)))))
 	}
 
 	return http.ListenAndServe(hc.host.Addr(), nil)
 }
 
-//
+// HttpClient apis
 
-func (hc HttpClient) Connect() error { return nil }
-func (hc HttpClient) Close() error   { return nil }
+func (hc *HttpClient) Connect() error { return nil }
 
-func (hc HttpClient) ListFiles(*File) (FileList, error) {
+func (hc *HttpClient) Close() error { return nil }
+
+func (hc *HttpClient) ListFiles(file *File) (FileList, error) {
+	if hc.server {
+		local := NewLocal()
+		return local.ListFiles(file)
+	}
+
 	var files FileList
 	u, err := hc.NewUrl(fmt.Sprintf("%s/list", hc.host.URL))
 
@@ -392,15 +348,32 @@ func (hc HttpClient) ListFiles(*File) (FileList, error) {
 	}
 
 	err = json.Unmarshal(content, &files)
+
+	for _, f := range files.Files {
+		f.client = hc
+	}
 	return files, err
 }
 
-func (hc HttpClient) Exists(path string) bool {
+func (hc *HttpClient) Exists(path string) bool {
+	if hc.server {
+		local := NewLocal()
+		return local.Exists(path)
+	}
 	_, err := hc.NewUrl(fmt.Sprintf("%s/list?path=%s", hc.host.URL, strings.TrimLeft(path, hc.root.Path)))
 	return err == nil
 }
 
-func (hc HttpClient) NewFile(path string) (*File, error) {
+func (hc *HttpClient) NewFile(path string) (*File, error) {
+	if hc.server {
+		local := NewLocal()
+		f, err := local.NewFile(path)
+		if f != nil {
+			f.client = hc
+		}
+		hc.root = f
+		return f, err
+	}
 	stat, err := os.Stat(path)
 	if err != nil {
 		return nil, err
@@ -420,20 +393,20 @@ func (hc HttpClient) NewFile(path string) (*File, error) {
 
 	return &File{
 		Path: strings.TrimLeft(path, hc.root.Path), Size: fSize,
-		IsFile: !stat.IsDir(), IsLocal: false,
+		IsFile: !stat.IsDir(), client: hc,
 	}, nil
 }
 
-func (hc HttpClient) Mkdir(path string) error {
+func (hc *HttpClient) Mkdir(path string) error {
 	_, err := hc.NewUrl(fmt.Sprintf("%s/create?path=%s", hc.host.URL, strings.TrimLeft(path, hc.root.Path)))
 	return err
 }
 
-func (hc HttpClient) MkParent(path string) error {
+func (hc *HttpClient) MkParent(path string) error {
 	return hc.Mkdir(filepath.Dir(strings.TrimLeft(path, hc.root.Path)))
 }
 
-func (hc HttpClient) GetMd5(file *File) error {
+func (hc *HttpClient) GetMd5(file *File) error {
 	u, err := hc.NewUrl(fmt.Sprintf("%s/md5?path=%s", hc.host.URL, strings.TrimLeft(file.Path, hc.root.Path)))
 	if err != nil {
 		return err
@@ -447,7 +420,7 @@ func (hc HttpClient) GetMd5(file *File) error {
 	return nil
 }
 
-func (hc HttpClient) Stat(path string) (os.FileInfo, error) {
+func (hc *HttpClient) Stat(path string) (os.FileInfo, error) {
 	u, err := hc.NewUrl(fmt.Sprintf("%s/stat?path=%s", hc.host.URL, strings.TrimLeft(path, hc.root.Path)))
 	if err != nil {
 		return nil, err
@@ -462,10 +435,23 @@ func (hc HttpClient) Stat(path string) (os.FileInfo, error) {
 	return info, err
 }
 
-func (hc HttpClient) Reader(path string) (io.ReadSeekCloser, error) {
-	return HttpFileReader{
-		client: hc, url: fmt.Sprintf("%s/%s", hc.host.URL, strings.TrimLeft(path, hc.root.Path)),
-	}, nil
+func (hc *HttpClient) Reader(path string, offset int64) (io.ReadCloser, error) {
+	client := &http.Client{}
+	if hc.transport != nil {
+		client.Transport = hc.transport
+	}
+
+	req, err := http.NewRequest(http.MethodGet, fmt.Sprintf("%s/%s", hc.host.URL, strings.TrimLeft(path, hc.root.Path)), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Set("Range", fmt.Sprintf("bytes=%d-", offset))
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	return resp.Body, nil
 }
 
 func (hc HttpClient) Writer(path string, code int) (io.WriteCloser, error) {

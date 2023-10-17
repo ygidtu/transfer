@@ -33,6 +33,11 @@ func CreateProxy(proxy string) (*Proxy, error) {
 		Password: password,
 		Scheme:   strings.ToLower(u.Scheme),
 		URL:      u,
+		Path:     u.Path,
+	}
+
+	if p.Path == "" {
+		p.Path = "/"
 	}
 
 	if p.Scheme == "ssh" && p.Username == "" {

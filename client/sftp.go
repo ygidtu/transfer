@@ -21,27 +21,18 @@ type SftpClient struct {
 	sshClient  *ssh.Client  //ssh client
 	sftpClient *sftp.Client //sftp client
 	SCP        bool
+	rsa        string
 	Concurrent int
 }
 
-func NewSftp(host, proxy, rsa string, scp bool, concurrent int) *SftpClient {
-	remoteHost, err := CreateProxy(host)
-	if err != nil {
-		log.Fatalf("wrong format of ssh server [%s]:  %s", host, err)
-	}
-	remoteHost.Path = rsa
-
-	if remoteHost.Port == "" {
-		remoteHost.Port = "22"
+func NewSftp(host, proxy *Proxy, rsa string, scp bool, concurrent int) *SftpClient {
+	if host.Port == "" {
+		host.Port = "22"
 	}
 
-	client := &SftpClient{Host: remoteHost, SCP: scp, Concurrent: concurrent}
-	if proxy != "" {
-		p, err := CreateProxy(proxy)
-		if err != nil {
-			log.Fatal(err, "proxy format error")
-		}
-		client.Proxy = p
+	client := &SftpClient{Host: host, SCP: scp, Concurrent: concurrent, rsa: rsa}
+	if proxy != nil && proxy.Scheme != "ssh" && proxy.Scheme != "socks5" {
+		log.Fatalf("sftp do not support %s proxy", proxy.Scheme)
 	}
 
 	if err := client.Connect(); err != nil {
@@ -91,10 +82,10 @@ func sshConfig(username, password, rsa string) (*ssh.ClientConfig, error) {
 	}, nil
 }
 
-// sshClient generate a ssh client by id_rsa or password
-func sshClient(host *Proxy) (*ssh.Client, error) {
+// sshClient generate ssh client by id_rsa or password
+func sshClient(host *Proxy, rsa string) (*ssh.Client, error) {
 
-	config, err := sshConfig(host.Username, host.Password, host.Path)
+	config, err := sshConfig(host.Username, host.Password, rsa)
 	if err != nil {
 		return nil, err
 	}
@@ -107,25 +98,25 @@ func sshClient(host *Proxy) (*ssh.Client, error) {
 }
 
 // sshClientConn generate a ssh client connection
-func sshClientConn(conn net.Conn, host *Proxy) (*ssh.Client, error) {
-	config, err := sshConfig(host.Username, host.Password, host.Path)
+func sshClientConn(conn net.Conn, host *Proxy, rsa string) (*ssh.Client, error) {
+	config, err := sshConfig(host.Username, host.Password, rsa)
 	if err != nil {
 		return nil, err
 	}
 
-	c, chans, reqs, err := ssh.NewClientConn(conn, fmt.Sprintf("%s:%v", host.Host, host.Port), config)
+	c, channels, reqs, err := ssh.NewClientConn(conn, fmt.Sprintf("%s:%v", host.Host, host.Port), config)
 	if err != nil {
 		return nil, err
 	}
 
-	return ssh.NewClient(c, chans, reqs), nil
+	return ssh.NewClient(c, channels, reqs), nil
 }
 
 // Connect to server
 func (cliConf *SftpClient) Connect() error {
 
 	if cliConf.Proxy == nil {
-		client, err := sshClient(cliConf.Host)
+		client, err := sshClient(cliConf.Host, cliConf.rsa)
 
 		if err != nil {
 			return err
@@ -134,7 +125,7 @@ func (cliConf *SftpClient) Connect() error {
 	} else if cliConf.Proxy.Scheme == "ssh" { // ssh proxy
 		// dial to proxy server
 		log.Infof("dail through ssh proxy: %s", cliConf.Proxy.Addr())
-		proxyClient, err := sshClient(cliConf.Proxy)
+		proxyClient, err := sshClient(cliConf.Proxy, cliConf.rsa)
 
 		if err != nil {
 			return err
@@ -147,7 +138,7 @@ func (cliConf *SftpClient) Connect() error {
 			return err
 		}
 
-		client, err := sshClientConn(conn, cliConf.Host)
+		client, err := sshClientConn(conn, cliConf.Host, cliConf.rsa)
 		if err != nil {
 			return err
 		}
@@ -165,7 +156,7 @@ func (cliConf *SftpClient) Connect() error {
 			return err
 		}
 
-		client, err := sshClientConn(conn, cliConf.Host)
+		client, err := sshClientConn(conn, cliConf.Host, cliConf.rsa)
 		if err != nil {
 			return err
 		}
@@ -216,10 +207,7 @@ func (cliConf *SftpClient) NewFile(path string) (*File, error) {
 	}
 
 	stat, _ := cliConf.sftpClient.Lstat(path)
-	return &File{
-		Path: path, Size: stat.Size(),
-		IsFile: !stat.IsDir(), IsLocal: false,
-	}, nil
+	return &File{Path: path, Size: stat.Size(), IsFile: !stat.IsDir(), client: cliConf}, nil
 }
 
 // Mkdir as name says
@@ -239,8 +227,13 @@ func (cliConf *SftpClient) MkParent(path string) error {
 	return nil
 }
 
-func (cliConf *SftpClient) Reader(path string) (io.ReadSeekCloser, error) {
-	return cliConf.sftpClient.Open(path)
+func (cliConf *SftpClient) Reader(path string, offset int64) (io.ReadCloser, error) {
+	r, err := cliConf.sftpClient.Open(path)
+	if err != nil {
+		return r, err
+	}
+	_, err = r.Seek(offset, 0)
+	return r, err
 }
 
 func (cliConf *SftpClient) Writer(path string, code int) (io.WriteCloser, error) {
@@ -253,7 +246,7 @@ func (cliConf *SftpClient) Stat(path string) (os.FileInfo, error) {
 
 func (cliConf *SftpClient) GetMd5(file *File) error {
 	if ok := cliConf.Exists(file.Path); ok {
-		reader, err := cliConf.Reader(file.Path)
+		reader, err := cliConf.Reader(file.Path, 0)
 		if err != nil {
 			return err
 		}
@@ -269,10 +262,12 @@ func (cliConf *SftpClient) GetMd5(file *File) error {
 				if err != nil {
 					return err
 				}
-				_, err = reader.Seek(stat.Size()-capacity/2, 0)
+
+				reader, err = cliConf.Reader(file.Path, stat.Size()-capacity/2)
 				if err != nil {
 					return err
 				}
+				defer reader.Close()
 				_, err = reader.Read(data[capacity/2:])
 				if err != nil {
 					return err
@@ -303,12 +298,18 @@ func (cliConf *SftpClient) ListFiles(file *File) (FileList, error) {
 			}
 
 			if !w.Stat().IsDir() {
-				files.Files = append(files.Files, &File{Path: w.Path(), Size: w.Stat().Size(), IsFile: true, IsLocal: false})
+				files.Files = append(
+					files.Files,
+					&File{Path: w.Path(), Size: w.Stat().Size(), IsFile: true, client: cliConf},
+				)
 				files.Total += w.Stat().Size()
 			}
 		}
 	} else {
-		files.Files = append(files.Files, &File{Path: file.Path, Size: stat.Size(), IsFile: true, IsLocal: false})
+		files.Files = append(
+			files.Files,
+			&File{Path: file.Path, Size: stat.Size(), IsFile: true, client: cliConf},
+		)
 		files.Total += stat.Size()
 	}
 	return files, nil
