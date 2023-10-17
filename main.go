@@ -1,7 +1,6 @@
 package main
 
 import (
-	"github.com/schollz/progressbar/v3"
 	"github.com/voxelbrain/goptions"
 	"github.com/ygidtu/transfer/base"
 	"github.com/ygidtu/transfer/client"
@@ -36,19 +35,10 @@ func main() {
 	}
 
 	// init service
-	if options.Verbs != "" {
-		bar := progressbar.New(1)
-		cli, err := client.InitClient(&options, bar)
-		if err != nil {
-			base.SugaredLog.Fatal(err)
-		}
-
-		cli.Start()
-		err = cli.Close()
-		if err != nil {
-			base.SugaredLog.Fatal(err)
-		}
-	} else {
-		goptions.PrintHelp()
+	cli, err := client.InitClient(&options)
+	if err != nil {
+		base.SugaredLog.Fatal(err)
 	}
+
+	cli.Start()
 }

@@ -16,13 +16,20 @@ import (
 
 type FtpFileInfo struct {
 	file *ftp.Entry
+	root bool
 }
 
 func (ffi FtpFileInfo) Name() string {
+	if ffi.root {
+		return "/"
+	}
 	return filepath.Base(ffi.file.Name)
 }
 
 func (ffi FtpFileInfo) Size() int64 {
+	if ffi.root {
+		return 0
+	}
 	return int64(ffi.file.Size)
 }
 
@@ -32,43 +39,25 @@ func (ffi FtpFileInfo) Mode() fs.FileMode {
 }
 
 func (ffi FtpFileInfo) IsDir() bool {
+	if ffi.root {
+		return true
+	}
 	return ffi.file.Type == ftp.EntryTypeFolder
 }
 
 // Sys return the target of symbolic link
 func (ffi FtpFileInfo) Sys() any {
+	if ffi.root {
+		return ffi.root
+	}
 	return ffi.file.Target
 }
 
 func (ffi FtpFileInfo) ModTime() time.Time {
-	return ffi.file.Time
-}
-
-// FtpFileReader create an instance of fs.FileReadCloser for ftp file
-type FtpFileReader struct {
-	client *ftp.ServerConn
-	path   string
-	offset int64
-	whence int
-}
-
-func (ffr *FtpFileReader) Read(p []byte) (int, error) {
-	resp, err := ffr.client.RetrFrom(ffr.path, uint64(ffr.offset)+uint64(ffr.whence))
-	defer resp.Close()
-	if err != nil {
-		return 0, err
+	if ffi.root {
+		return time.Now()
 	}
-	return resp.Read(p)
-}
-
-func (ffr *FtpFileReader) Seek(offset int64, whence int) (int64, error) {
-	ffr.offset = offset
-	ffr.whence = whence
-	return int64(whence) + offset, nil
-}
-
-func (ffr *FtpFileReader) Close() error {
-	return nil
+	return ffi.file.Time
 }
 
 type FtpFileWriter struct {
@@ -128,17 +117,12 @@ type FtpClient struct {
 	Client *ftp.ServerConn
 }
 
-func NewFtp(host string) *FtpClient {
-	remoteHost, err := CreateProxy(host)
-	if err != nil {
-		log.Fatalf("wrong format of ssh server [%s]:  %s", host, err)
+func NewFtp(host *Proxy) *FtpClient {
+	if host.Port == "" {
+		host.Port = "21"
 	}
 
-	if remoteHost.Port == "" {
-		remoteHost.Port = "21"
-	}
-
-	cfg := &FtpClient{Host: remoteHost}
+	cfg := &FtpClient{Host: host}
 
 	if err := cfg.Connect(); err != nil {
 		log.Fatal(err)
@@ -168,23 +152,22 @@ func (fc *FtpClient) Close() error {
 }
 
 func (fc *FtpClient) NewFile(path string) (*File, error) {
+	var err error
 	stat, err := fc.Client.List(path)
 
 	if len(stat) > 0 && err == nil {
 		for _, i := range stat {
 			if i.Name == filepath.Base(path) {
-				return &File{
-					Path: path, Size: int64(i.Size),
-					IsFile: i.Type == ftp.EntryTypeFile, IsLocal: false,
-				}, nil
+				return &File{Path: path, Size: int64(i.Size), IsFile: i.Type == ftp.EntryTypeFile, client: fc}, nil
 			}
 		}
 	}
 
-	return &File{
-		Path: path, Size: 0,
-		IsFile: true, IsLocal: false,
-	}, os.ErrNotExist
+	if path != "/" {
+		err = os.ErrNotExist
+	}
+
+	return &File{Path: path, Size: 0, client: fc, IsFile: true}, err
 }
 
 func (fc *FtpClient) Exists(path string) bool {
@@ -197,9 +180,12 @@ func (fc *FtpClient) Stat(path string) (fs.FileInfo, error) {
 	if len(stat) > 0 && err == nil {
 		for _, i := range stat {
 			if i.Name == filepath.Base(path) {
-				return FtpFileInfo{i}, nil
+				return FtpFileInfo{file: i}, nil
 			}
 		}
+	}
+	if path == "/" {
+		return FtpFileInfo{root: true}, nil
 	}
 	return nil, os.ErrNotExist
 }
@@ -216,11 +202,12 @@ func (fc *FtpClient) MkParent(path string) error {
 	return fc.Mkdir(filepath.Dir(path))
 }
 
-func (fc *FtpClient) Reader(path string) (io.ReadSeekCloser, error) {
+func (fc *FtpClient) Reader(path string, offset int64) (io.ReadCloser, error) {
 	if ok := fc.Exists(path); !ok {
 		return nil, os.ErrNotExist
 	}
-	return &FtpFileReader{client: fc.Client, path: path, whence: 0, offset: 0}, nil
+	log.Infof("get path: %s %v", path, offset)
+	return fc.Client.RetrFrom(path, uint64(offset))
 }
 
 func (fc *FtpClient) Writer(path string, code int) (io.WriteCloser, error) {
@@ -237,7 +224,8 @@ func (fc *FtpClient) Writer(path string, code int) (io.WriteCloser, error) {
 func (fc *FtpClient) GetMd5(file *File) error {
 	if stat, err := fc.Stat(file.Path); !os.IsNotExist(err) {
 		var data []byte
-		r, err := fc.Reader(file.Path)
+		r, err := fc.Reader(file.Path, 0)
+		defer r.Close()
 		if err != nil {
 			return err
 		}
@@ -249,10 +237,12 @@ func (fc *FtpClient) GetMd5(file *File) error {
 			if err != nil {
 				return err
 			}
-			_, err = r.Seek(stat.Size()-capacity/2, 0)
+
+			r, err = fc.Reader(file.Path, stat.Size()-capacity/2)
 			if err != nil {
 				return err
 			}
+			defer r.Close()
 			_, err = r.Read(data[capacity/2:])
 		}
 		if err != nil {
@@ -267,37 +257,45 @@ func (fc *FtpClient) GetMd5(file *File) error {
 func (fc *FtpClient) ListFiles(file *File) (FileList, error) {
 	files := FileList{Files: []*File{}}
 
-	walker := fc.Client.Walk(file.Path)
-	if walker.Err() != nil {
-		return files, walker.Err()
+	stat, err := fc.Stat(file.Path)
+	if err != nil {
+		return files, err
 	}
 
-	if walker.Stat().Type == ftp.EntryTypeFile {
+	if !stat.IsDir() {
 		f, err := fc.NewFile(file.Path)
 		if err != nil {
 			return files, err
 		}
 		files.Files = append(files.Files, f)
 		files.Total += f.Size
-	} else if walker.Stat().Type == ftp.EntryTypeFolder {
+	} else {
 		// walk a directory
-		entries, err := fc.Client.List(file.Path)
-		if err != nil {
-			return files, err
-		}
-		for _, e := range entries {
+		walker := fc.Client.Walk(file.Path)
+
+		for walker.Next() {
+			e := walker.Stat()
 			if opt.Skip && e.Name != "." && e.Name != "./" && strings.HasPrefix(e.Name, ".") {
 				continue
 			}
 			if e.Type == ftp.EntryTypeFile {
-				files.Files = append(files.Files, &File{Path: e.Name, Size: int64(e.Size), IsFile: true, IsLocal: false})
+				files.Files = append(
+					files.Files,
+					&File{Path: e.Name, Size: int64(e.Size), IsFile: true, client: fc},
+				)
 				files.Total += int64(e.Size)
 			} else if e.Type == ftp.EntryTypeLink {
-				files.Files = append(files.Files, &File{Path: e.Name, Target: e.Target, Size: int64(e.Size), IsFile: true, IsLocal: false})
+				files.Files = append(
+					files.Files,
+					&File{Path: e.Name, Target: e.Target, Size: int64(e.Size), IsFile: true, client: fc},
+				)
 				files.Total += int64(e.Size)
 			}
 		}
-	}
 
+		if walker.Err() != nil {
+			return files, walker.Err()
+		}
+	}
 	return files, nil
 }
