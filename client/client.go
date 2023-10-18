@@ -17,12 +17,6 @@ var (
 	fileSizeLimit = int64(10 * 1024 * 1024)
 )
 
-type FileIO interface {
-	Set(offset int64) error
-	Reader(path string) (io.ReadCloser, error)
-	//Writer(path string) (io.WriteCloser, error)
-}
-
 type Client interface {
 	Connect() error
 	Close() error
@@ -33,7 +27,7 @@ type Client interface {
 	MkParent(path string) error
 	GetMd5(file *File) error
 	Reader(path string, offset int64) (io.ReadCloser, error)
-	Writer(path string, code int) (io.WriteCloser, error)
+	WriteAt(reader io.Reader, path string, trunc bool) error
 	Stat(path string) (os.FileInfo, error)
 }
 

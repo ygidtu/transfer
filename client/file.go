@@ -40,8 +40,8 @@ func (file *File) GetTarget(source, target *File) *File {
 
 	dst := &File{Path: filepath.Join(target.Path, path), IsFile: source.IsFile, client: target.client}
 
-	stat, err := dst.Stat()
-	if !os.IsNotExist(err) {
+	stat, _ := dst.Stat()
+	if stat != nil {
 		dst.Size = stat.Size()
 		dst.IsFile = !stat.IsDir()
 	}
@@ -58,8 +58,8 @@ func (file *File) Reader(offset int64) (io.ReadCloser, error) {
 	return file.client.Reader(file.Path, offset)
 }
 
-func (file *File) Writer(code int) (io.WriteCloser, error) {
-	return file.client.Writer(file.Path, code)
+func (file *File) WriteAt(reader io.Reader, trunc bool) error {
+	return file.client.WriteAt(reader, file.Path, trunc)
 }
 
 // GetMd5 calculate the md5 hash of partial file
