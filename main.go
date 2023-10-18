@@ -2,6 +2,7 @@ package main
 
 import (
 	"github.com/voxelbrain/goptions"
+	"github.com/whiteshtef/clockwork"
 	"github.com/ygidtu/transfer/base"
 	"github.com/ygidtu/transfer/client"
 	"os"
@@ -40,5 +41,11 @@ func main() {
 		base.SugaredLog.Fatal(err)
 	}
 
-	cli.Start()
+	if options.Daemon {
+		sched := clockwork.NewScheduler()
+		sched.Schedule().Every(1).Days().At("12:30").Do(cli.Start)
+		sched.Run()
+	} else {
+		cli.Start()
+	}
 }

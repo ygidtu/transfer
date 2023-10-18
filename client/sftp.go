@@ -236,8 +236,19 @@ func (cliConf *SftpClient) Reader(path string, offset int64) (io.ReadCloser, err
 	return r, err
 }
 
-func (cliConf *SftpClient) Writer(path string, code int) (io.WriteCloser, error) {
-	return cliConf.sftpClient.OpenFile(path, code)
+func (cliConf *SftpClient) WriteAt(reader io.Reader, path string, trunc bool) error {
+	writerCode := os.O_CREATE | os.O_WRONLY | os.O_APPEND
+	if trunc {
+		writerCode = os.O_CREATE | os.O_WRONLY | os.O_TRUNC
+	}
+	f, err := cliConf.sftpClient.OpenFile(path, writerCode)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	_, err = io.Copy(f, reader)
+	return err
 }
 
 func (cliConf *SftpClient) Stat(path string) (os.FileInfo, error) {
@@ -246,20 +257,30 @@ func (cliConf *SftpClient) Stat(path string) (os.FileInfo, error) {
 
 func (cliConf *SftpClient) GetMd5(file *File) error {
 	if ok := cliConf.Exists(file.Path); ok {
-		reader, err := cliConf.Reader(file.Path, 0)
-		if err != nil {
-			return err
-		}
-		defer reader.Close()
 
 		var data []byte
 		if stat, err := cliConf.Stat(file.Path); !os.IsNotExist(err) {
 			if stat.Size() < fileSizeLimit {
+				reader, err := cliConf.Reader(file.Path, 0)
+				if err != nil {
+					return err
+				}
 				data, err = io.ReadAll(reader)
+				if err := reader.Close(); err != nil {
+					return err
+				}
 			} else {
 				data = make([]byte, capacity)
+
+				reader, err := cliConf.Reader(file.Path, 0)
+				if err != nil {
+					return err
+				}
 				_, err = reader.Read(data[:capacity/2])
 				if err != nil {
+					return err
+				}
+				if err := reader.Close(); err != nil {
 					return err
 				}
 
@@ -267,9 +288,11 @@ func (cliConf *SftpClient) GetMd5(file *File) error {
 				if err != nil {
 					return err
 				}
-				defer reader.Close()
 				_, err = reader.Read(data[capacity/2:])
 				if err != nil {
+					return err
+				}
+				if err := reader.Close(); err != nil {
 					return err
 				}
 			}

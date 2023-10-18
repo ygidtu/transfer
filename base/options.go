@@ -11,8 +11,9 @@ type Options struct {
 	Scp        bool          `goptions:"-s, --scp, description='transfer through scp instead of sftp'"`
 	IdRsa      string        `goptions:"-I, --rsa, description='path to id_rsa file, default: ~/.ssh/id_rsa'"`
 	Concurrent int           `goptions:"-n, --n-jobs, description='the number of jobs to run'"`
+	Daemon     bool          `goptions:"-d, --daemon, description='run transfer in daemon mode'"`
 	Skip       bool          `goptions:"--skip, description='skip hidden files'"`
 	Help       goptions.Help `goptions:"-h, --help, description='show this help'"`
 	Version    bool          `goptions:"-v, --version, description='show version information'"`
-	Debug      bool          `goptions:"-d, --debug, description='show more info'"`
+	Debug      bool          `goptions:"--debug, description='show more info'"`
 }
