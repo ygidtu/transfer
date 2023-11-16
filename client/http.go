@@ -4,66 +4,30 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"github.com/ygidtu/transfer/base/fi"
 	"io"
-	"io/fs"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
-	"time"
 )
 
-type HttpFileInfo struct {
-	NameS    string    `json:"name"`
-	SizeI    int64     `json:"size"`
-	ModeI    uint32    `json:"mode"`
-	IsDirB   bool      `json:"isDir"`
-	ModTimeT time.Time `json:"modTime"`
-}
-
-func NewHttpFileInfo(stat os.FileInfo) HttpFileInfo {
-	return HttpFileInfo{
-		NameS: stat.Name(), SizeI: stat.Size(), ModeI: uint32(stat.Mode()),
-		IsDirB: stat.IsDir(), ModTimeT: stat.ModTime(),
-	}
-}
-
-func (hfi HttpFileInfo) Name() string {
-	return hfi.NameS
-}
-
-func (hfi HttpFileInfo) Size() int64 {
-	return hfi.SizeI
-}
-
-// Mode return the fake file mode for http file
-func (hfi HttpFileInfo) Mode() fs.FileMode {
-	return fs.FileMode(hfi.ModeI)
-}
-
-func (hfi HttpFileInfo) IsDir() bool {
-	return hfi.IsDirB
-}
-
-// Sys return the target of symbolic link
-func (hfi HttpFileInfo) Sys() any {
-	return ""
-}
-
-func (hfi HttpFileInfo) ModTime() time.Time {
-	return hfi.ModTimeT
-}
-
+// HttpClient http客户端的配置，同时涵盖了服务端和客户端两种模式
 type HttpClient struct {
-	host      *Proxy
-	root      *File
-	proxy     *Proxy
-	transport *http.Transport
-	server    bool
+	host      *Proxy          // http服务端监听的地址，客户端链接的地址
+	root      *File           // 根目录的地址
+	proxy     *Proxy          // 客户端支持的http、socks代理
+	transport *http.Transport // 客户端的配置文件
+	server    bool            // 客户端还是服务端模式
 }
 
+/*
+NewHTTPClient 新建http配置对象
+@host: http服务端监听的地址，客户端链接的地址
+@proxy: 客户端支持的http、socks代理
+*/
 func NewHTTPClient(host, proxy *Proxy) (*HttpClient, error) {
 	client := &HttpClient{host: host, proxy: proxy, server: opt.Server != ""}
 	if proxy != nil {
@@ -74,18 +38,23 @@ func NewHTTPClient(host, proxy *Proxy) (*HttpClient, error) {
 	}
 	var err error
 	local := NewLocal()
-	client.root, err = local.NewFile(host.Path)
+	client.root, err = local.newFile(host.Path)
 	if err != nil {
 		return client, err
 	}
 	return client, nil
 }
 
+// URL 返回http监听的url地址
 func (hc *HttpClient) URL() string {
 	return strings.TrimRight(hc.host.URL.String(), "/")
 }
 
-func (hc *HttpClient) newUrl(url string) (io.ReadCloser, error) {
+/*
+newResp 获取链接地址的response信息
+@url: 目标链接地址
+*/
+func (hc *HttpClient) newResp(url string) (io.ReadCloser, error) {
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
@@ -112,15 +81,17 @@ func (hc *HttpClient) newUrl(url string) (io.ReadCloser, error) {
 	return resp.Body, nil
 }
 
-// HttpServer handlers
+/*
+HttpServer handlers
+*/
 
-// ListFilesServer as name says list all files under directory, and wrap into json format to serve
-func (hc *HttpClient) ListFilesServer(w http.ResponseWriter, _ *http.Request) {
+// listFilesServer as name says list all files under directory, and wrap into json format to serve
+func (hc *HttpClient) listFilesServer(w http.ResponseWriter, _ *http.Request) {
 	var files FileList
 	var err error
 	local := NewLocal()
 	if hc.root != nil {
-		files, err = local.ListFiles(hc.root)
+		files, err = local.listFiles(hc.root)
 		if err != nil {
 			log.Error(err)
 		}
@@ -135,8 +106,8 @@ func (hc *HttpClient) ListFilesServer(w http.ResponseWriter, _ *http.Request) {
 	_ = json.NewEncoder(w).Encode(files)
 }
 
-// GetFilesServer as name says get posted file and save it
-func (hc *HttpClient) GetFilesServer(w http.ResponseWriter, req *http.Request) {
+// getFilesServer as name says get posted file and save it
+func (hc *HttpClient) getFilesServer(w http.ResponseWriter, req *http.Request) {
 	var err error
 	switch req.Method {
 	case "POST":
@@ -205,7 +176,8 @@ func (hc *HttpClient) GetFilesServer(w http.ResponseWriter, req *http.Request) {
 	}
 }
 
-func (hc *HttpClient) CreateDirServer(w http.ResponseWriter, req *http.Request) {
+// createDireServer 在服务器上新建目录
+func (hc *HttpClient) createDirServer(w http.ResponseWriter, req *http.Request) {
 	for k, v := range req.URL.Query() {
 		if k == "path" && len(v) > 0 {
 			path := filepath.Join(hc.root.Path, v[0])
@@ -225,7 +197,8 @@ func (hc *HttpClient) CreateDirServer(w http.ResponseWriter, req *http.Request) 
 	}
 }
 
-func (hc *HttpClient) GetMd5Server(w http.ResponseWriter, req *http.Request) {
+// getMd5Server 在服务器端计算目标文件的md5并返回
+func (hc *HttpClient) getMd5Server(w http.ResponseWriter, req *http.Request) {
 	for k, v := range req.URL.Query() {
 		if k == "path" && len(v) > 0 {
 			path := filepath.Join(hc.root.Path, v[0])
@@ -257,7 +230,8 @@ func (hc *HttpClient) GetMd5Server(w http.ResponseWriter, req *http.Request) {
 	}
 }
 
-func (hc *HttpClient) StatServer(w http.ResponseWriter, req *http.Request) {
+// statServer 在服务器端获取文件信息并返回
+func (hc *HttpClient) statServer(w http.ResponseWriter, req *http.Request) {
 	for k, v := range req.URL.Query() {
 		if k == "path" && len(v) > 0 {
 			path := filepath.Join(hc.root.Path, v[0])
@@ -269,7 +243,7 @@ func (hc *HttpClient) StatServer(w http.ResponseWriter, req *http.Request) {
 				w.WriteHeader(http.StatusNotModified)
 				_, _ = io.WriteString(w, err.Error())
 			} else {
-				statStruct := NewHttpFileInfo(stat)
+				statStruct := fi.NewHttpFileInfo(stat)
 				if statBytes, err := json.Marshal(statStruct); err == nil {
 					_, _ = w.Write(statBytes)
 				} else {
@@ -282,15 +256,16 @@ func (hc *HttpClient) StatServer(w http.ResponseWriter, req *http.Request) {
 	}
 }
 
-func (hc *HttpClient) StartServer() error {
+// startServer 启动服务器端
+func (hc *HttpClient) startServer() error {
 	log.Info("path: ", hc.root.Path)
 	log.Info("host: ", hc.host)
 
-	http.HandleFunc("/list", hc.ListFilesServer)
-	http.HandleFunc("/post", hc.GetFilesServer)
-	http.HandleFunc("/create", hc.CreateDirServer)
-	http.HandleFunc("/md5", hc.GetMd5Server)
-	http.HandleFunc("/stat", hc.StatServer)
+	http.HandleFunc("/list", hc.listFilesServer)
+	http.HandleFunc("/post", hc.getFilesServer)
+	http.HandleFunc("/create", hc.createDirServer)
+	http.HandleFunc("/md5", hc.getMd5Server)
+	http.HandleFunc("/stat", hc.statServer)
 
 	if _, ok := os.Stat(opt.Source); os.IsNotExist(ok) {
 		if err := os.MkdirAll(opt.Source, os.ModePerm); err != nil {
@@ -307,20 +282,36 @@ func (hc *HttpClient) StartServer() error {
 	return http.ListenAndServe(hc.host.Addr(), nil)
 }
 
-// HttpClient apis
+/*
+客户端相关API实现
+*/
 
-func (hc *HttpClient) Connect() error { return nil }
+// clientType 返回客户端类型
+func (hc *HttpClient) clientType() transferClientType {
+	if hc.server {
+		return HttpS
+	}
+	return Http
+}
 
-func (hc *HttpClient) Close() error { return nil }
+// connect 仅实现client接口，该函数在http客户端上无实际意义
+func (hc *HttpClient) connect() error { return nil }
 
-func (hc *HttpClient) ListFiles(file *File) (FileList, error) {
+// close 仅实现client接口，该函数在http客户端上无实际意义
+func (hc *HttpClient) close() error { return nil }
+
+/*
+listFiles 向服务器端请求特定目录下所有文件的信息
+@file: 目标路径地址
+*/
+func (hc *HttpClient) listFiles(file *File) (FileList, error) {
 	if hc.server {
 		local := NewLocal()
-		return local.ListFiles(file)
+		return local.listFiles(file)
 	}
 
 	var files FileList
-	u, err := hc.newUrl(fmt.Sprintf("%s/list", hc.URL()))
+	u, err := hc.newResp(fmt.Sprintf("%s/list", hc.URL()))
 
 	if err != nil {
 		return files, err
@@ -338,19 +329,27 @@ func (hc *HttpClient) ListFiles(file *File) (FileList, error) {
 	return files, err
 }
 
-func (hc *HttpClient) Exists(path string) bool {
+/*
+exists 向服务器端请求检查特定文件是否存在
+@path: 目标文件路径
+*/
+func (hc *HttpClient) exists(path string) bool {
 	if hc.server {
 		local := NewLocal()
-		return local.Exists(path)
+		return local.exists(path)
 	}
-	_, err := hc.newUrl(fmt.Sprintf("%s/list?path=%s", hc.URL(), strings.TrimLeft(path, hc.root.Path)))
+	_, err := hc.newResp(fmt.Sprintf("%s/list?path=%s", hc.URL(), strings.TrimLeft(path, hc.root.Path)))
 	return err == nil
 }
 
-func (hc *HttpClient) NewFile(path string) (*File, error) {
+/*
+newFile 若为客户端，则向服务器端请求特定文件对象信息；若为服务器端，则检查本地是否存在该文件并生成文件对象
+@path: 目标文件路径
+*/
+func (hc *HttpClient) newFile(path string) (*File, error) {
 	if hc.server {
 		local := NewLocal()
-		f, err := local.NewFile(path)
+		f, err := local.newFile(path)
 		if f != nil {
 			f.client = hc
 		}
@@ -363,7 +362,7 @@ func (hc *HttpClient) NewFile(path string) (*File, error) {
 	}
 
 	fSize := int64(0)
-	u, err := hc.newUrl(fmt.Sprintf("%s/list?path=%s", hc.URL(), strings.TrimLeft(path, hc.root.Path)))
+	u, err := hc.newResp(fmt.Sprintf("%s/list?path=%s", hc.URL(), strings.TrimLeft(path, hc.root.Path)))
 	if err == nil {
 		fSizeStr, err := io.ReadAll(u)
 		if err == nil {
@@ -380,17 +379,29 @@ func (hc *HttpClient) NewFile(path string) (*File, error) {
 	}, nil
 }
 
-func (hc *HttpClient) Mkdir(path string) error {
-	_, err := hc.newUrl(fmt.Sprintf("%s/create?path=%s", hc.URL(), strings.TrimLeft(path, hc.root.Path)))
+/*
+mkdir 向服务器端请求在服务器上新建目录
+@path: 目标文件路径
+*/
+func (hc *HttpClient) mkdir(path string) error {
+	_, err := hc.newResp(fmt.Sprintf("%s/create?path=%s", hc.URL(), strings.TrimLeft(path, hc.root.Path)))
 	return err
 }
 
-func (hc *HttpClient) MkParent(path string) error {
-	return hc.Mkdir(filepath.Dir(strings.TrimLeft(path, hc.root.Path)))
+/*
+mkParent 向服务器端请求新建文件的父目录
+@path: 目标文件路径
+*/
+func (hc *HttpClient) mkParent(path string) error {
+	return hc.mkdir(filepath.Dir(strings.TrimLeft(path, hc.root.Path)))
 }
 
-func (hc *HttpClient) GetMd5(file *File) error {
-	u, err := hc.newUrl(fmt.Sprintf("%s/md5?path=%s", hc.URL(), strings.TrimLeft(file.Path, hc.root.Path)))
+/*
+getMd5 向服务器端请求特定文件的md5信息
+@file: 目标文件路径
+*/
+func (hc *HttpClient) getMd5(file *File) error {
+	u, err := hc.newResp(fmt.Sprintf("%s/md5?path=%s", hc.URL(), strings.TrimLeft(file.Path, hc.root.Path)))
 	if err != nil {
 		return err
 	}
@@ -403,8 +414,12 @@ func (hc *HttpClient) GetMd5(file *File) error {
 	return nil
 }
 
-func (hc *HttpClient) Stat(path string) (os.FileInfo, error) {
-	u, err := hc.newUrl(fmt.Sprintf("%s/stat?path=%s", hc.URL(), strings.TrimLeft(path, hc.root.Path)))
+/*
+stat 向服务器端请求特定文件的文件信息
+@path: 目标文件路径
+*/
+func (hc *HttpClient) stat(path string) (os.FileInfo, error) {
+	u, err := hc.newResp(fmt.Sprintf("%s/stat?path=%s", hc.URL(), strings.TrimLeft(path, hc.root.Path)))
 	if err != nil {
 		return nil, err
 	}
@@ -413,12 +428,17 @@ func (hc *HttpClient) Stat(path string) (os.FileInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	info := &HttpFileInfo{}
+	info := &fi.HttpFileInfo{}
 	err = json.Unmarshal(data, info)
 	return info, err
 }
 
-func (hc *HttpClient) Reader(path string, offset int64) (io.ReadCloser, error) {
+/*
+reader 向服务器端请求特定文件的文件内容
+@path: 目标文件路径
+@offset: 读取文件的起始位置
+*/
+func (hc *HttpClient) reader(path string, offset int64) (io.ReadCloser, error) {
 	client := &http.Client{}
 	if hc.transport != nil {
 		client.Transport = hc.transport
@@ -437,7 +457,13 @@ func (hc *HttpClient) Reader(path string, offset int64) (io.ReadCloser, error) {
 	return resp.Body, nil
 }
 
-func (hc *HttpClient) WriteAt(reader io.Reader, path string, trunc bool) error {
+/*
+writeAt 向服务器端请求特定文件的文件内容
+@reader: 源文件的reader
+@path: 目标文件路径
+@trunc: 写入文件的模式trunc或者append
+*/
+func (hc *HttpClient) writeAt(reader io.Reader, path string, trunc bool) error {
 	mode := "a"
 	if trunc {
 		mode = "t"

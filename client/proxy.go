@@ -7,17 +7,25 @@ import (
 	"strings"
 )
 
+/*
+Proxy 用于处理所有自定义链接和代理链接，基本参考golang的net/url中的URL结构
+支持的链接格式为
+schema://[user:password]/host:port/path
+*/
 type Proxy struct {
 	Host     string
 	Port     string
 	Username string
 	Password string
 	Scheme   string
-	URL      *url.URL
+	URL      *url.URL // 地址对应的url.URL对象
 	Path     string
 }
 
-// CreateProxy creates a new Proxy by string
+/*
+CreateProxy creates a new Proxy by string
+@proxy: 链接字符串
+*/
 func CreateProxy(proxy string) (*Proxy, error) {
 	u, err := url.Parse(proxy)
 
@@ -55,6 +63,7 @@ func CreateProxy(proxy string) (*Proxy, error) {
 	return p, nil
 }
 
+// Addr 返回host:port格式的地址
 func (p *Proxy) Addr() string {
 	return fmt.Sprintf("%s:%v", p.Host, p.Port)
 }

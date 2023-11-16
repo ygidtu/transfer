@@ -9,17 +9,30 @@ import (
 	"strings"
 )
 
+// LocalClient 本地文件的客户端，无需任何配置
 type LocalClient struct{}
 
+// NewLocal 新建本地客户端
 func NewLocal() *LocalClient {
 	return &LocalClient{}
 }
 
-func (l *LocalClient) Connect() error                        { return nil }
-func (l *LocalClient) Close() error                          { return nil }
-func (l *LocalClient) RemoteToRemote(_ *File, _ *File) error { return nil }
+// clientType 返回客户端类型
+func (_ *LocalClient) clientType() transferClientType {
+	return Local
+}
 
-func (l *LocalClient) GetMd5(file *File) error {
+// connect 仅实现client接口，该函数在local客户端上无实际意义
+func (l *LocalClient) connect() error { return nil }
+
+// close 仅实现client接口，该函数在local客户端上无实际意义
+func (l *LocalClient) close() error { return nil }
+
+/*
+getMd5 计算本地小文件的完成md5，大文件的头尾md5
+@file: 本地文件的路径
+*/
+func (l *LocalClient) getMd5(file *File) error {
 	stat, err := os.Stat(file.Path)
 	if os.IsNotExist(err) {
 		return err
@@ -58,18 +71,30 @@ func (l *LocalClient) GetMd5(file *File) error {
 	return nil
 }
 
-func (l *LocalClient) Mkdir(path string) error {
+/*
+mkdir 新建本地文件夹
+@path: 本地文件的路径
+*/
+func (l *LocalClient) mkdir(path string) error {
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		return os.MkdirAll(path, os.ModePerm)
 	}
 	return nil
 }
 
-func (l *LocalClient) MkParent(path string) error {
+/*
+mkParent 新建本地文件的父目录
+@path: 本地文件的路径
+*/
+func (l *LocalClient) mkParent(path string) error {
 	return os.MkdirAll(filepath.Dir(path), os.ModePerm)
 }
 
-func (l *LocalClient) NewFile(path string) (*File, error) {
+/*
+newFile 生成本地文件对象
+@path: 本地文件的路径
+*/
+func (l *LocalClient) newFile(path string) (*File, error) {
 	stat, err := os.Stat(path)
 	if !os.IsNotExist(err) {
 		return &File{Path: path, Size: stat.Size(), IsFile: !stat.IsDir(), client: l}, nil
@@ -77,12 +102,21 @@ func (l *LocalClient) NewFile(path string) (*File, error) {
 	return &File{Path: path, Size: 0, IsFile: false, client: l}, nil
 }
 
-func (l *LocalClient) Exists(path string) bool {
+/*
+exists 检查本地文件是否存在
+@path: 本地文件的路径
+*/
+func (l *LocalClient) exists(path string) bool {
 	_, err := os.Stat(path)
 	return !os.IsNotExist(err)
 }
 
-func (l *LocalClient) Reader(path string, offset int64) (io.ReadCloser, error) {
+/*
+reader 本地文件的reader
+@path: 本地文件的路径
+@offset: 本地文件的起始读取位置
+*/
+func (l *LocalClient) reader(path string, offset int64) (io.ReadCloser, error) {
 	r, err := os.Open(path)
 	if err != nil {
 		return r, err
@@ -91,7 +125,25 @@ func (l *LocalClient) Reader(path string, offset int64) (io.ReadCloser, error) {
 	return r, err
 }
 
-func (l *LocalClient) WriteAt(reader io.Reader, path string, trunc bool) error {
+/*
+readSeeker 本地文件的reader，但返回io.ReadSeekCloser
+@path: 本地文件的路径
+*/
+func (l *LocalClient) readSeeker(path string) (io.ReadSeekCloser, error) {
+	r, err := os.Open(path)
+	if err != nil {
+		return r, err
+	}
+	return r, err
+}
+
+/*
+writeAt 本地文件的writer
+@reader: 源文件的reader
+@path: 本地文件的路径
+@trucn: 本地文件是以trunc还是append模式打开
+*/
+func (l *LocalClient) writeAt(reader io.Reader, path string, trunc bool) error {
 	writerCode := os.O_CREATE | os.O_WRONLY | os.O_APPEND
 	if trunc {
 		writerCode = os.O_CREATE | os.O_WRONLY | os.O_TRUNC
@@ -106,11 +158,19 @@ func (l *LocalClient) WriteAt(reader io.Reader, path string, trunc bool) error {
 	return err
 }
 
-func (l *LocalClient) Stat(path string) (os.FileInfo, error) {
+/*
+stat 返回本地文件的文件信息，直接调用os.Stat
+@path: 本地文件的路径
+*/
+func (l *LocalClient) stat(path string) (os.FileInfo, error) {
 	return os.Stat(path)
 }
 
-func (l *LocalClient) ListFiles(file *File) (FileList, error) {
+/*
+listFiles 返回本地目录下的所有文件
+@file: 本地文件的路径
+*/
+func (l *LocalClient) listFiles(file *File) (FileList, error) {
 	files := FileList{Files: []*File{}, Total: 0}
 	var err error
 
