@@ -16,15 +16,23 @@ import (
 
 // SftpClient 连接的配置
 type SftpClient struct {
-	Host       *Proxy
-	Proxy      *Proxy
+	Host       *Proxy       // ssh的host，ssh://user:password@host:port/path
+	Proxy      *Proxy       // ssh支持的socks或者ssh代理
 	sshClient  *ssh.Client  //ssh client
 	sftpClient *sftp.Client //sftp client
-	SCP        bool
-	rsa        string
-	Concurrent int
+	SCP        bool         // 是否通过scp模式传输文件，scp模式不可单文件续传
+	rsa        string       // rsa秘钥文件
+	Concurrent int          // 传输的线程数
 }
 
+/*
+NewSftp 新建新的Sftp传输客户端
+@host: ssh host
+@proxy: ssh所需的proxy，支持ssh或者socks5代理
+@rsa: 认证key地址
+@scp: 是否采用scp模式传输
+@concurrent: 并行熟练
+*/
 func NewSftp(host, proxy *Proxy, rsa string, scp bool, concurrent int) *SftpClient {
 	if host.Port == "" {
 		host.Port = "22"
@@ -35,14 +43,19 @@ func NewSftp(host, proxy *Proxy, rsa string, scp bool, concurrent int) *SftpClie
 		log.Fatalf("sftp do not support %s proxy", proxy.Scheme)
 	}
 
-	if err := client.Connect(); err != nil {
+	if err := client.connect(); err != nil {
 		log.Fatal(err)
 	}
 	log.Infof("connected to %s", client.Host.Addr())
 	return client
 }
 
-// sshAuth
+/*
+sshConfig 完成ssh认证和登录
+@username: 用户名
+@password: 密码
+@rsa: 认证秘钥的地址
+*/
 func sshConfig(username, password, rsa string) (*ssh.ClientConfig, error) {
 	idRsa := filepath.Join(os.Getenv("HOME"), ".ssh", "id_rsa")
 	if rsa != "" {
@@ -112,8 +125,13 @@ func sshClientConn(conn net.Conn, host *Proxy, rsa string) (*ssh.Client, error) 
 	return ssh.NewClient(c, channels, reqs), nil
 }
 
-// Connect to server
-func (cliConf *SftpClient) Connect() error {
+// clientType 返回客户端类型
+func (_ *SftpClient) clientType() transferClientType {
+	return Sftp
+}
+
+// connect 连接至ssh服务器
+func (cliConf *SftpClient) connect() error {
 
 	if cliConf.Proxy == nil {
 		client, err := sshClient(cliConf.Host, cliConf.rsa)
@@ -182,22 +200,22 @@ func (cliConf *SftpClient) Connect() error {
 	return err
 }
 
-// Close closes the sftp connection
-func (cliConf *SftpClient) Close() error {
+// close closes the sftp connection
+func (cliConf *SftpClient) close() error {
 	if err := cliConf.sftpClient.Close(); err != nil {
 		return err
 	}
 	return cliConf.sshClient.Close()
 }
 
-// Exists check whether file or directory exists
-func (cliConf *SftpClient) Exists(path string) bool {
+// exists check whether file or directory exists
+func (cliConf *SftpClient) exists(path string) bool {
 	_, err := cliConf.sftpClient.Lstat(path)
 	return !os.IsNotExist(err)
 }
 
-// NewFile create a new file on remote server
-func (cliConf *SftpClient) NewFile(path string) (*File, error) {
+// newFile create a new file on remote server
+func (cliConf *SftpClient) newFile(path string) (*File, error) {
 
 	if _, err := cliConf.sftpClient.Lstat(filepath.Dir(path)); os.IsNotExist(err) {
 		err = cliConf.sftpClient.MkdirAll(filepath.Dir(path))
@@ -210,24 +228,29 @@ func (cliConf *SftpClient) NewFile(path string) (*File, error) {
 	return &File{Path: path, Size: stat.Size(), IsFile: !stat.IsDir(), client: cliConf}, nil
 }
 
-// Mkdir as name says
-func (cliConf *SftpClient) Mkdir(path string) error {
-	if !cliConf.Exists(path) {
+// mkdir as name says
+func (cliConf *SftpClient) mkdir(path string) error {
+	if !cliConf.exists(path) {
 		return cliConf.sftpClient.MkdirAll(path)
 	}
 	return nil
 }
 
-// MkParent make parent directory of path
-func (cliConf *SftpClient) MkParent(path string) error {
+// mkParent make parent directory of path
+func (cliConf *SftpClient) mkParent(path string) error {
 	parent := filepath.Dir(path)
-	if !cliConf.Exists(parent) {
-		return cliConf.Mkdir(parent)
+	if !cliConf.exists(parent) {
+		return cliConf.mkdir(parent)
 	}
 	return nil
 }
 
-func (cliConf *SftpClient) Reader(path string, offset int64) (io.ReadCloser, error) {
+/*
+reader 提供sftp服务器上特定文件的reader
+@path: 文件路径
+@offset: 文件的特定位置开始读取
+*/
+func (cliConf *SftpClient) reader(path string, offset int64) (io.ReadCloser, error) {
 	r, err := cliConf.sftpClient.Open(path)
 	if err != nil {
 		return r, err
@@ -236,7 +259,13 @@ func (cliConf *SftpClient) Reader(path string, offset int64) (io.ReadCloser, err
 	return r, err
 }
 
-func (cliConf *SftpClient) WriteAt(reader io.Reader, path string, trunc bool) error {
+/*
+writeAt 向服务器上某个文件的特定位置写入数据
+@reader: 源文件的reader
+@path: 写入对象的地址
+@trunc: 写入的模式为trunc还是append
+*/
+func (cliConf *SftpClient) writeAt(reader io.Reader, path string, trunc bool) error {
 	writerCode := os.O_CREATE | os.O_WRONLY | os.O_APPEND
 	if trunc {
 		writerCode = os.O_CREATE | os.O_WRONLY | os.O_TRUNC
@@ -251,17 +280,25 @@ func (cliConf *SftpClient) WriteAt(reader io.Reader, path string, trunc bool) er
 	return err
 }
 
-func (cliConf *SftpClient) Stat(path string) (os.FileInfo, error) {
+/*
+stat 获取服务器上特定文件信息
+@path: 文件路径
+*/
+func (cliConf *SftpClient) stat(path string) (os.FileInfo, error) {
 	return cliConf.sftpClient.Lstat(path)
 }
 
-func (cliConf *SftpClient) GetMd5(file *File) error {
-	if ok := cliConf.Exists(file.Path); ok {
+/*
+getMd5 获取服务器上小文件的完整md5和大文件的头尾md5
+@file: 服务器上文件对象
+*/
+func (cliConf *SftpClient) getMd5(file *File) error {
+	if ok := cliConf.exists(file.Path); ok {
 
 		var data []byte
-		if stat, err := cliConf.Stat(file.Path); !os.IsNotExist(err) {
+		if stat, err := cliConf.stat(file.Path); !os.IsNotExist(err) {
 			if stat.Size() < fileSizeLimit {
-				reader, err := cliConf.Reader(file.Path, 0)
+				reader, err := cliConf.reader(file.Path, 0)
 				if err != nil {
 					return err
 				}
@@ -272,7 +309,7 @@ func (cliConf *SftpClient) GetMd5(file *File) error {
 			} else {
 				data = make([]byte, capacity)
 
-				reader, err := cliConf.Reader(file.Path, 0)
+				reader, err := cliConf.reader(file.Path, 0)
 				if err != nil {
 					return err
 				}
@@ -284,7 +321,7 @@ func (cliConf *SftpClient) GetMd5(file *File) error {
 					return err
 				}
 
-				reader, err = cliConf.Reader(file.Path, stat.Size()-capacity/2)
+				reader, err = cliConf.reader(file.Path, stat.Size()-capacity/2)
 				if err != nil {
 					return err
 				}
@@ -302,7 +339,7 @@ func (cliConf *SftpClient) GetMd5(file *File) error {
 	return nil
 }
 
-func (cliConf *SftpClient) ListFiles(file *File) (FileList, error) {
+func (cliConf *SftpClient) listFiles(file *File) (FileList, error) {
 	files := FileList{Files: []*File{}}
 	// walk a directory
 	if stat, err := cliConf.sftpClient.Stat(file.Path); os.IsNotExist(err) {
