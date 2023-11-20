@@ -16,9 +16,8 @@ var (
 )
 
 func main() {
-	var options = base.InitOptions()
-
-	if options.Version {
+	var opt = base.InitOptions()
+	if opt.Version {
 		base.SugaredLog.Infof("Current version: %s", version)
 		base.SugaredLog.Infof("Git Commit Hash: %s", gitHash)
 		base.SugaredLog.Infof("UTC Build Time : %s", buildStamp)
@@ -26,17 +25,27 @@ func main() {
 		os.Exit(0)
 	}
 
-	if options.Concurrent < 1 {
-		options.Concurrent = 1
+	// check the number of threads to use
+	if opt.Concurrent < 1 {
+		opt.Concurrent = 1
+	}
+
+	// check the input source and target
+	if opt.Source == "" {
+		base.SugaredLog.Fatal("please set source file/directory")
+	}
+
+	if opt.Target == "" {
+		base.SugaredLog.Fatal("please set target file/directory")
 	}
 
 	// init service
-	cli, err := client.InitClient(options)
+	cli, err := client.InitClient(opt)
 	if err != nil {
 		base.SugaredLog.Fatal(err)
 	}
 
-	if options.Daemon {
+	if opt.Daemon {
 		sched := clockwork.NewScheduler()
 		sched.Schedule().Every(1).Days().At("12:30").Do(cli.Start)
 		sched.Run()
