@@ -34,27 +34,43 @@ Please download the pre-build binary from [releases page](https://github.com/ygi
 ### 2.1 Help message
 
 ```bash
-Usage: transfer [global options] 
+SYNOPSIS:
+    transfer [--bucket|-b <string>] [--daemon|-d] [--debug] [--help|-h]
+             [--input|-i <string>] [--n-jobs|-n <int>] [--output|-o <string>]
+             [--proxy|-x <string>] [--rsa|-r <string>] [--scp]
+             [--server|-s <string>] [--skip] [--version|-v] [<args>]
 
-Global options:
-        -i, --input   the source file path;
-                      the remote path should be [http|ftp|ssh|s3]://user:password@ip:port/path (*)
-        -o, --output  the target file path;
-                      the remote path should be [http|ftp|ssh|s3]://user:password@ip:port/path
-        -s, --server  the server host url and port
-        -x, --proxy   the proxy to use [http, socks5 or ssh://user:passwd@host:port]; 
-                      the http support http/socks5 proxy
-                      the ssh support socks5 and ssh proxy
-                      the aws s3 support http proxy
-        -b, --bucket  the bucket name of aws s3, use first bucket as default in buckets list
-        -s, --scp     transfer through scp instead of sftp
-        -I, --rsa     path to id_rsa file, default: ~/.ssh/id_rsa
-        -n, --n-jobs  the number of jobs to run
-        -d, --daemon  run transfer in daemon mode
-            --skip    skip hidden files
-        -h, --help    show this help
-        -v, --version show version information
-            --debug   show more info
+OPTIONS:
+    --bucket|-b <string>    the bucket name of aws s3, use first bucket as default in buckets lis (default: "")
+
+    --daemon|-d             run transfer in daemon mode (default: false)
+
+    --debug                 show more info (default: false)
+
+    --help|-h               show help information (default: false)
+
+    --input|-i <string>     the source file path;
+                            the remote path should be [http|ftp|ssh|s3]://user:password@ip:port/path (default: "")
+
+    --n-jobs|-n <int>       number of threads to use (default: 1)
+
+    --output|-o <string>    the target file path;
+                            the remote path should be [http|ftp|ssh|s3]://user:password@ip:port/path (default: "")
+
+    --proxy|-x <string>     the proxy to use [http, socks5 or ssh://user:passwd@host:port]; 
+                            the http support http/socks5 proxy
+                            the ssh support socks5 and ssh proxy
+                            the aws s3 support http proxy (default: "")
+
+    --rsa|-r <string>       path to id_rsa file (default: "/Users/zhangyiming/.ssh/id_rsa")
+
+    --scp                   transfer through scp instead of sftp (default: false)
+
+    --server|-s <string>    the server host url and port (default: "")
+
+    --skip                  skip hidden file (default: false)
+
+    --version|-v            show version information (default: false)
 ```
 
 ### 2.2 command line usage
@@ -89,6 +105,10 @@ transfer -i test_data/ -o s3://profile/path --bucket bucket
 
 # pull files from the specific path of specific bucket with s3's specific profile to local
 transfer -i s3://profile/path --bucket bucket -o test_data
+
+# transfer also support neglect th -i and -o, 
+# transfer will take 1st positional argument as source, the last one as target
+transfer test_data s3://profile/path
 ```
 
 > Note: transfer only support transfer files between local and aws s3, and the aws s3 credentials required to be properly configured between running transfer
@@ -99,10 +119,13 @@ transfer -i s3://profile/path --bucket bucket -o test_data
 aws_access_key_id = xxx
 aws_secret_access_key = xxx
 endpoint_url = http://host:port
+region = ap-east-1
 
 [profile1]
 aws_access_key_id = xxx
 aws_secret_access_key = xxx
+region = ap-east-1
 ```
 
+> **region is required by AWS SDK for Go v2**    
 > more information please check the [official documents](https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-files.html)
