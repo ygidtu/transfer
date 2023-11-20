@@ -40,16 +40,11 @@ def main():
         else:
             raise ValueError("{} is not supported".format(args.arch))
 
-    for i in PLATFORMS:
+    for i in platform:
         print(i)
 
-        for j in ARCHITECTURE:
+        for j in arch:
             check_call(f"env GOOS='{i}' GOARCH={j} go build -ldflags {flags} -x -o transfer_{i}_{j} .", shell=True)
-            if i != "linux":
-                try:
-                    check_call(f"upx -9 transfer_{i}_{j}", shell=True)
-                except CalledProcessError as e:
-                    continue
 
 
 if __name__ == "__main__":
