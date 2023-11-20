@@ -35,8 +35,8 @@ func timeEncoder(t time.Time, enc zapcore.PrimitiveArrayEncoder) {
 	enc.AppendString(t.Format("2006-01-02 15:04:05.000"))
 }
 
-// SetLogger init the zap logger
-func SetLogger(debug bool) {
+// setLogger init the zap logger
+func setLogger(debug bool) {
 	encoder := newEncoderConfig()
 	level := zap.InfoLevel
 	if debug {

@@ -20,7 +20,7 @@ func (afi AwsFileInfo) Name() string {
 
 // Size 返回文件大小
 func (afi AwsFileInfo) Size() int64 {
-	return int64(afi.Object.Size)
+	return *afi.Object.Size
 }
 
 // Mode return the fake file mode for ftp file

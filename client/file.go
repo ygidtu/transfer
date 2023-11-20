@@ -41,6 +41,11 @@ func (file *File) GetTarget(source, target *File) *File {
 
 	dst := &File{Path: filepath.Join(target.Path, path), IsFile: source.IsFile, client: target.client}
 
+	// 如果指定的target的文件与source文件名字相同，则不再使用join合并通路
+	if filepath.Base(target.Path) == filepath.Base(source.Path) {
+		dst = &File{Path: target.Path, IsFile: source.IsFile, client: target.client}
+	}
+
 	stat, _ := dst.Stat()
 	if stat != nil {
 		dst.Size = stat.Size()

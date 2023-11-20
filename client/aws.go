@@ -105,10 +105,10 @@ func (asc *AwsS3Client) listFiles(src *File) (FileList, error) {
 
 	for _, object := range output.Contents {
 		files.Files = append(files.Files, &File{
-			Path: *object.Key, Size: object.Size,
+			Path: *object.Key, Size: *object.Size,
 			IsFile: true, client: asc,
 		})
-		files.Total += object.Size
+		files.Total += *object.Size
 	}
 	return files, nil
 }
@@ -143,7 +143,7 @@ func (asc *AwsS3Client) newFile(path string) (*File, error) {
 
 		for _, object := range output.Contents {
 			if path == *object.Key {
-				return &File{Path: path, Size: object.Size, client: asc, IsFile: true}, nil
+				return &File{Path: path, Size: *object.Size, client: asc, IsFile: true}, nil
 			}
 		}
 	}

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"github.com/voxelbrain/goptions"
 	"github.com/whiteshtef/clockwork"
 	"github.com/ygidtu/transfer/base"
 	"github.com/ygidtu/transfer/client"
@@ -17,11 +16,7 @@ var (
 )
 
 func main() {
-	var options = base.Options{}
-	goptions.ParseAndFail(&options)
-
-	// ini logger
-	base.SetLogger(options.Debug)
+	var options = base.InitOptions()
 
 	if options.Version {
 		base.SugaredLog.Infof("Current version: %s", version)
@@ -36,7 +31,7 @@ func main() {
 	}
 
 	// init service
-	cli, err := client.InitClient(&options)
+	cli, err := client.InitClient(options)
 	if err != nil {
 		base.SugaredLog.Fatal(err)
 	}
