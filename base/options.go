@@ -87,16 +87,5 @@ func InitOptions() *Options {
 		os.Exit(1)
 	}
 
-	if opt.Concurrent < 1 {
-		opt.Concurrent = 1
-	}
-
-	if len(opt.Source) < 1 {
-		SugaredLog.Fatal("please set source files/directories")
-	}
-	if opt.Target == "" {
-		SugaredLog.Fatal("please set target files/directories")
-	}
-
 	return opt
 }

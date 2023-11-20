@@ -26,7 +26,16 @@ Please download the pre-build binary from [releases page](https://github.com/ygi
    # execute transfer to check the help information
    ./transfer --help
    ```
-
+   
+   > or using my build.py script, which only requires python3 to execute
+   ```bash
+   ./build.py --help             # for help information
+   
+   ./build.py                    # build binary for your OS and architecture
+   ./build.py -p linux -a amd64  # build binary for specific OS and architecture
+   ./build.py --all              # build binaries for all supported platforms and architectures              
+   ```
+   
 ---
 
 ## 2. Usage
