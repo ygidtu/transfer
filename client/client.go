@@ -17,8 +17,8 @@ var (
 	fileSizeLimit = int64(10 * 1024 * 1024)
 )
 
-// transferClientType 自定义的客户端类型
-type transferClientType string
+// TransferClientType 自定义的客户端类型
+type TransferClientType string
 
 const (
 	NoClient = "no-client"
@@ -32,7 +32,7 @@ const (
 
 // Client 客户端的接口
 type Client interface {
-	clientType() transferClientType                          // 返回客户端类型
+	clientType() TransferClientType                          // 返回客户端类型
 	connect() error                                          // 实现客户端的链接功能
 	close() error                                            // 关闭客户端
 	listFiles(src *File) (FileList, error)                   // 列出特定目录下的所有文件

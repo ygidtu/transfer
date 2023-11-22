@@ -18,7 +18,7 @@ func NewLocal() *LocalClient {
 }
 
 // clientType 返回客户端类型
-func (_ *LocalClient) clientType() transferClientType {
+func (_ *LocalClient) clientType() TransferClientType {
 	return Local
 }
 

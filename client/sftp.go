@@ -126,7 +126,7 @@ func sshClientConn(conn net.Conn, host *Proxy, rsa string) (*ssh.Client, error) 
 }
 
 // clientType 返回客户端类型
-func (_ *SftpClient) clientType() transferClientType {
+func (_ *SftpClient) clientType() TransferClientType {
 	return Sftp
 }
 

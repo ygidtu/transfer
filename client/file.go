@@ -41,8 +41,8 @@ func (file *File) GetTarget(source, target *File) *File {
 
 	dst := &File{Path: filepath.Join(target.Path, path), IsFile: source.IsFile, client: target.client}
 
-	// 如果指定的target的文件与source文件名字相同，则不再使用join合并通路
-	if filepath.Base(target.Path) == filepath.Base(source.Path) {
+	// 如果指定的target的文件与待传输文件名字相同，则不再使用join合并通路
+	if filepath.Base(target.Path) == filepath.Base(file.Path) {
 		dst = &File{Path: target.Path, IsFile: source.IsFile, client: target.client}
 	}
 
@@ -119,7 +119,7 @@ func (file *File) Children() (FileList, error) {
 }
 
 // Source offers the client type
-func (file *File) Source() transferClientType {
+func (file *File) Source() TransferClientType {
 	if file.client == nil {
 		return NoClient
 	}
