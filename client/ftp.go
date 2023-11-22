@@ -37,7 +37,7 @@ func NewFtp(host *Proxy) *FtpClient {
 }
 
 // clientType 返回客户端类型
-func (_ *FtpClient) clientType() transferClientType { return Ftp }
+func (_ *FtpClient) clientType() TransferClientType { return Ftp }
 
 // connect 连接至ftp服务器
 func (fc *FtpClient) connect() error {

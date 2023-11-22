@@ -36,7 +36,7 @@ func NewS3Client(host, proxy *Proxy, bucket string) (*AwsS3Client, error) {
 }
 
 // clientType 表明本client的类型
-func (_ *AwsS3Client) clientType() transferClientType {
+func (_ *AwsS3Client) clientType() TransferClientType {
 	return Aws
 }
 

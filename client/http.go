@@ -287,7 +287,7 @@ func (hc *HttpClient) startServer() error {
 */
 
 // clientType 返回客户端类型
-func (hc *HttpClient) clientType() transferClientType {
+func (hc *HttpClient) clientType() TransferClientType {
 	if hc.server {
 		return HttpS
 	}
