@@ -172,12 +172,12 @@ func (asc *AwsS3Client) newFile(path string) (*File, error) {
 
 // mkdir 创建文件夹
 func (asc *AwsS3Client) mkdir(path string) error {
-	if !asc.exists(path) {
-		_, err := asc.client.PutObject(context.TODO(), &s3.PutObjectInput{
-			Bucket: aws.String(asc.Bucket), Key: aws.String(path),
-		})
-		return err
-	}
+	//if !asc.exists(path) {
+	//	_, err := asc.client.PutObject(context.TODO(), &s3.PutObjectInput{
+	//		Bucket: aws.String(asc.Bucket), Key: aws.String(path),
+	//	})
+	//	return err
+	//}
 	return nil
 }
 
