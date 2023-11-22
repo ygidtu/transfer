@@ -8,6 +8,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/ygidtu/transfer/base/fi"
+	"gopkg.in/ini.v1"
 	"io"
 	"net/http"
 	"os"
@@ -42,6 +43,21 @@ func (_ *AwsS3Client) clientType() TransferClientType {
 
 // connect 链接至服务器
 func (asc *AwsS3Client) connect() error {
+
+	userHome, err := os.UserHomeDir()
+	if err != nil {
+		log.Fatalf("failed to get user  home directory: %v", err)
+	}
+	credentials := filepath.Join(userHome, ".aws/credentials")
+	if _, err := os.Stat(credentials); os.IsNotExist(err) {
+		log.Fatalf("aws credential do not exists: %v", err)
+	}
+
+	cfgFile, err := ini.Load(credentials)
+	if err != nil {
+		log.Fatalf("failed to read file: %v", err)
+	}
+
 	if asc.Host == nil {
 		return fmt.Errorf("please set host for aws s3")
 	}
@@ -51,10 +67,15 @@ func (asc *AwsS3Client) connect() error {
 		asc.Host.Host = "default"
 	}
 
-	cfg, err := config.LoadDefaultConfig(
-		context.TODO(),
-		config.WithSharedConfigProfile(asc.Host.Host),
-	)
+	if !cfgFile.HasSection(asc.Host.Host) {
+		log.Fatalf("do no have profile for %v", asc.Host.Host)
+	}
+
+	cfg, err := config.LoadDefaultConfig(context.TODO(), config.WithSharedConfigProfile(asc.Host.Host))
+
+	if cfgFile.Section(asc.Host.Host).HasKey("endpoint_url") {
+		cfg.BaseEndpoint = aws.String(cfgFile.Section(asc.Host.Host).Key("endpoint_url").String())
+	}
 
 	if asc.Proxy != nil {
 		cfg.HTTPClient = &http.Client{
@@ -81,7 +102,6 @@ func (asc *AwsS3Client) connect() error {
 			asc.Bucket = *obj.Name
 			break
 		}
-
 	}
 
 	return nil
