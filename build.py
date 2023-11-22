@@ -6,7 +6,7 @@ from subprocess import check_output, check_call, CalledProcessError
 
 
 
-__VERSION__ = '0.1.2'
+__VERSION__ = '0.1.3'
 
 
 def __init_architectures__():
