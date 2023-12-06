@@ -25,9 +25,15 @@ type FileList struct {
 	Total int64
 }
 
-// Name is used to return the file name
-func (file *File) Name() string {
-	return filepath.Base(file.Path)
+func (file *File) ShortID() string {
+	fn := []rune(file.Name())
+
+	maxLen := 20
+	if len(fn) > maxLen {
+		return fmt.Sprintf("%s...%s", string(fn[:maxLen/2]), string(fn[(len(fn)-maxLen/2):]))
+	}
+
+	return string(fn)
 }
 
 // GetTarget generate the target path
