@@ -36,11 +36,6 @@ func (file *File) ShortID() string {
 	return string(fn)
 }
 
-// Name is used to return the file name
-func (file *File) Name() string {
-	return filepath.Base(file.Path)
-}
-
 // GetTarget generate the target path
 func (file *File) GetTarget(source, target *File) *File {
 	sourcePath := source.Path
